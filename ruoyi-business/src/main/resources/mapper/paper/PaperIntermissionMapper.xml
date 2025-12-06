@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.student.archive.mapper.paper.PaperIntermissionMapper">
+
+    <resultMap id="PaperIntermissionResult" type="com.ruoyi.student.archive.domain.paper.PaperIntermission">
+        <id     property="id"                        column="id"                        />
+        <result property="paperId"                   column="paper_id"                  />
+        <result property="fromVolumeId"             column="from_volume_id"            />
+        <result property="toVolumeId"               column="to_volume_id"              />
+        <result property="fromVolume"               column="from_volume"              />
+        <result property="toVolume"                 column="to_volume"                />
+        <result property="intermissionText"         column="intermission_text"          />
+        <result property="intermissionAudioUrl"     column="intermission_audio_url"     />
+        <result property="intermissionAudioPath"    column="intermission_audio_path"    />
+        <result property="intermissionAudioDuration" column="intermission_audio_duration" />
+        <result property="canSkip"                  column="can_skip"                  />
+        <result property="createTime"               column="create_time"                />
+        <result property="updateTime"               column="update_time"                />
+    </resultMap>
+
+    <sql id="selectPaperIntermissionVo">
+        select id, paper_id, from_volume_id, to_volume_id, from_volume, to_volume, intermission_text,
+               intermission_audio_url, intermission_audio_path, intermission_audio_duration,
+               can_skip, create_time, update_time
+        from paper_intermission
+    </sql>
+
+    <select id="selectByPaperId" parameterType="Integer" resultMap="PaperIntermissionResult">
+        <include refid="selectPaperIntermissionVo"/>
+        where paper_id = #{paperId}
+        order by from_volume asc, to_volume asc
+    </select>
+
+    <select id="selectByPaperIdAndVolumes" resultMap="PaperIntermissionResult">
+        <include refid="selectPaperIntermissionVo"/>
+        where paper_id = #{paperId} and from_volume = #{fromVolume} and to_volume = #{toVolume}
+        limit 1
+    </select>
+
+    <delete id="deleteByPaperId" parameterType="Integer">
+        delete from paper_intermission where paper_id = #{paperId}
+    </delete>
+
+</mapper>
+
+
+

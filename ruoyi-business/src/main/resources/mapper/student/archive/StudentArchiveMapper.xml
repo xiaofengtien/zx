@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.student.archive.mapper.StudentArchiveMapper">
+
+	<resultMap type="com.ruoyi.student.archive.domain.StudentArchive" id="StudentArchiveResult">
+		<id     property="id"              column="id"               />
+		<result property="userId"          column="user_id"          />
+		<result property="studentAccount"   column="student_account"   />
+		<result property="studentName"     column="student_name"     />
+		<result property="password"        column="password"         />
+		<result property="phoneNumber"     column="phone_number"     />
+		<result property="sex"             column="sex"              />
+		<result property="grade"           column="grade"             />
+		<result property="currentGrade"    column="current_grade"    />
+		<result property="hometown"        column="hometown"         />
+		<result property="seatNumber"     column="seat_number"     />
+		<result property="applicablePapers" column="applicable_papers" 
+		        typeHandler="com.ruoyi.student.archive.domain.typehandler.ListStringTypeHandler" />
+		<result property="applicablePaperIds" column="applicable_paper_ids" 
+		        typeHandler="com.ruoyi.student.archive.domain.typehandler.ListIntegerTypeHandler" />
+		<result property="status"          column="status"           />
+		<result property="delFlag"         column="del_flag"          />
+		<result property="pwdUpdateDate"   column="pwd_update_date"   />
+		<result property="createBy"        column="create_by"        />
+		<result property="createTime"      column="create_time"      />
+		<result property="updateBy"        column="update_by"        />
+		<result property="updateTime"      column="update_time"      />
+		<result property="remark"          column="remark"           />
+	</resultMap>
+	
+	<sql id="selectStudentArchiveVo">
+        select id, user_id, student_account, student_name, password, phone_number, sex, grade, current_grade, hometown, seat_number,
+               applicable_papers, applicable_paper_ids, status, del_flag, pwd_update_date, create_by, create_time, update_by, update_time, remark 
+		from student_archive
+    </sql>
+	
+	<select id="selectStudentArchiveList" parameterType="com.ruoyi.student.archive.domain.StudentArchive" resultMap="StudentArchiveResult">
+	    <include refid="selectStudentArchiveVo"/>
+		<where>
+			del_flag = '0'
+			<if test="studentAccount != null and studentAccount != ''">
+				AND student_account like concat('%', #{studentAccount}, '%')
+			</if>
+			<if test="studentName != null and studentName != ''">
+				AND student_name like concat('%', #{studentName}, '%')
+			</if>
+			<if test="phoneNumber != null and phoneNumber != ''">
+				AND phone_number like concat('%', #{phoneNumber}, '%')
+			</if>
+			<if test="grade != null and grade != ''">
+				AND grade = #{grade}
+			</if>
+			<if test="currentGrade != null and currentGrade != ''">
+				AND current_grade = #{currentGrade}
+			</if>
+			<if test="applicablePapers != null and !applicablePapers.isEmpty()">
+				AND (
+				<foreach collection="applicablePapers" item="paper" separator=" OR ">
+					applicable_papers like concat('%', #{paper}, '%')
+				</foreach>
+				)
+			</if>
+			<if test="status != null and status != ''">
+				AND status = #{status}
+			</if>
+		</where>
+	</select>
+	
+	<select id="selectStudentArchiveById" parameterType="Long" resultMap="StudentArchiveResult">
+		<include refid="selectStudentArchiveVo"/>
+		where id = #{id} and del_flag = '0'
+	</select>
+	
+	<select id="selectStudentArchiveByStudentAccount" parameterType="String" resultMap="StudentArchiveResult">
+		<include refid="selectStudentArchiveVo"/>
+		where student_account = #{studentAccount} and del_flag = '0' limit 1
+	</select>
+	
+	<select id="checkStudentAccountUnique" parameterType="String" resultMap="StudentArchiveResult">
+		<include refid="selectStudentArchiveVo"/>
+		where student_account = #{studentAccount} and del_flag = '0' limit 1
+	</select>
+	
+	<select id="selectStudentArchiveByUserId" parameterType="Long" resultMap="StudentArchiveResult">
+		<include refid="selectStudentArchiveVo"/>
+		where user_id = #{userId} and del_flag = '0' limit 1
+	</select>
+	
+	<insert id="insertStudentArchive" parameterType="com.ruoyi.student.archive.domain.StudentArchive" useGeneratedKeys="true" keyProperty="id">
+		insert into student_archive(
+			<if test="userId != null">user_id,</if>
+			<if test="studentAccount != null and studentAccount != ''">student_account,</if>
+			<if test="studentName != null and studentName != ''">student_name,</if>
+			<if test="password != null and password != ''">password,</if>
+			<if test="phoneNumber != null and phoneNumber != ''">phone_number,</if>
+			<if test="sex != null and sex != ''">sex,</if>
+			<if test="grade != null and grade != ''">grade,</if>
+			<if test="currentGrade != null and currentGrade != ''">current_grade,</if>
+			<if test="hometown != null and hometown != ''">hometown,</if>
+			<if test="seatNumber != null and seatNumber != ''">seat_number,</if>
+			<if test="applicablePapers != null and !applicablePapers.isEmpty()">applicable_papers,</if>
+			<if test="applicablePaperIds != null and !applicablePaperIds.isEmpty()">applicable_paper_ids,</if>
+			<if test="status != null and status != ''">status,</if>
+			<if test="remark != null and remark != ''">remark,</if>
+			<if test="createBy != null and createBy != ''">create_by,</if>
+			create_time,
+			del_flag
+		)values(
+			<if test="userId != null">#{userId},</if>
+			<if test="studentAccount != null and studentAccount != ''">#{studentAccount},</if>
+			<if test="studentName != null and studentName != ''">#{studentName},</if>
+			<if test="password != null and password != ''">#{password},</if>
+			<if test="phoneNumber != null and phoneNumber != ''">#{phoneNumber},</if>
+			<if test="sex != null and sex != ''">#{sex},</if>
+			<if test="grade != null and grade != ''">#{grade},</if>
+			<if test="currentGrade != null and currentGrade != ''">#{currentGrade},</if>
+			<if test="hometown != null and hometown != ''">#{hometown},</if>
+			<if test="seatNumber != null and seatNumber != ''">#{seatNumber},</if>
+			<if test="applicablePapers != null and !applicablePapers.isEmpty()">#{applicablePapers,typeHandler=com.ruoyi.student.archive.domain.typehandler.ListStringTypeHandler},</if>
+			<if test="applicablePaperIds != null and !applicablePaperIds.isEmpty()">#{applicablePaperIds,typeHandler=com.ruoyi.student.archive.domain.typehandler.ListIntegerTypeHandler},</if>
+			<if test="status != null and status != ''">#{status},</if>
+			<if test="remark != null and remark != ''">#{remark},</if>
+			<if test="createBy != null and createBy != ''">#{createBy},</if>
+			sysdate(),
+			'0'
+		)
+	</insert>
+	
+	<update id="updateStudentArchive" parameterType="com.ruoyi.student.archive.domain.StudentArchive">
+		update student_archive
+		<set>
+			<if test="userId != null">user_id = #{userId},</if>
+			<if test="studentAccount != null and studentAccount != ''">student_account = #{studentAccount},</if>
+			<if test="studentName != null and studentName != ''">student_name = #{studentName},</if>
+			<if test="password != null and password != ''">password = #{password},</if>
+			<if test="phoneNumber != null and phoneNumber != ''">phone_number = #{phoneNumber},</if>
+			<if test="sex != null and sex != ''">sex = #{sex},</if>
+			<if test="grade != null and grade != ''">grade = #{grade},</if>
+			<if test="currentGrade != null and currentGrade != ''">current_grade = #{currentGrade},</if>
+			<if test="hometown != null and hometown != ''">hometown = #{hometown},</if>
+			<if test="seatNumber != null">seat_number = #{seatNumber},</if>
+			<if test="applicablePapers != null and !applicablePapers.isEmpty()">applicable_papers = #{applicablePapers,typeHandler=com.ruoyi.student.archive.domain.typehandler.ListStringTypeHandler},</if>
+			<if test="applicablePaperIds != null">applicable_paper_ids = #{applicablePaperIds,typeHandler=com.ruoyi.student.archive.domain.typehandler.ListIntegerTypeHandler},</if>
+			<if test="status != null and status != ''">status = #{status},</if>
+			<if test="remark != null">remark = #{remark},</if>
+			<if test="pwdUpdateDate != null">pwd_update_date = #{pwdUpdateDate},</if>
+			<if test="updateBy != null and updateBy != ''">update_by = #{updateBy},</if>
+			update_time = sysdate()
+		</set>
+		where id = #{id}
+	</update>
+	
+	<update id="deleteStudentArchiveById" parameterType="Long">
+		update student_archive set del_flag = '2' where id = #{id}
+	</update>
+	
+	<update id="deleteStudentArchiveByIds" parameterType="Long">
+		update student_archive set del_flag = '2' where id in
+		<foreach collection="array" item="id" open="(" separator="," close=")">
+			#{id}
+		</foreach>
+	</update>
+
+</mapper>
+

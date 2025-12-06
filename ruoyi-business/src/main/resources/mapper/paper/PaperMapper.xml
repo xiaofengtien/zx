@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.student.archive.mapper.paper.PaperMapper">
+
+    <resultMap id="PaperResult" type="com.ruoyi.student.archive.domain.paper.Paper">
+        <id     property="id"                column="id"                />
+        <result property="paperName"         column="paper_name"         />
+        <result property="paperCode"         column="paper_code"         />
+        <result property="paperType"         column="paper_type"         />
+        <result property="year"              column="year"               />
+        <result property="month"             column="month"               />
+        <result property="province"          column="province"            />
+        <result property="customName"        column="custom_name"        />
+        <result property="paperDesc"         column="paper_desc"         />
+        <result property="businessType"      column="business_type"      />
+        <result property="businessId"        column="business_id"        />
+        <result property="totalScore"        column="total_score"        />
+        <result property="totalQuestions"    column="total_questions"    />
+        <result property="duration"          column="duration"           />
+        <result property="introAudioUrl"     column="intro_audio_url"    />
+        <result property="introAudioPath"    column="intro_audio_path"   />
+        <result property="introAudioDuration" column="intro_audio_duration" />
+        <result property="introText"        column="intro_text"         />
+        <result property="autoNextQuestion" column="auto_next_question" />
+        <result property="showAnswerImmediately" column="show_answer_immediately" />
+        <result property="allowReview"      column="allow_review"       />
+        <result property="practiceLimit"    column="practice_limit"     />
+        <result property="trialListenEnabled" column="trial_listen_enabled" />
+        <result property="trialListenAudioUrl" column="trial_listen_audio_url" />
+        <result property="trialListenAudioPath" column="trial_listen_audio_path" />
+        <result property="trialListenAudioDuration" column="trial_listen_audio_duration" />
+        <result property="trialListenAudioText" column="trial_listen_audio_text" />
+        <result property="trialIntroAudioUrl" column="trial_intro_audio_url" />
+        <result property="trialIntroAudioPath" column="trial_intro_audio_path" />
+        <result property="trialIntroAudioDuration" column="trial_intro_audio_duration" />
+        <result property="operateListenText" column="operate_listen_text" />
+        <result property="operateListenImageUrl" column="operate_listen_image_url" />
+        <result property="operateListenImagePath" column="operate_listen_image_path" />
+        <result property="notes"            column="notes"              />
+        <result property="notesDisplayMode" column="notes_display_mode" />
+        <result property="questionReadDuration" column="question_read_duration" />
+        <result property="version"           column="version"            />
+        <result property="packageHash"      column="package_hash"      />
+        <result property="packageSize"      column="package_size"       />
+        <result property="lastPackageTime"  column="last_package_time"  />
+        <result property="status"           column="status"              />
+        <result property="createBy"          column="create_by"           />
+        <result property="createTime"       column="create_time"        />
+        <result property="updateBy"          column="update_by"          />
+        <result property="updateTime"       column="update_time"        />
+        <result property="remark"           column="remark"              />
+        <result property="delFlag"          column="del_flag"            />
+    </resultMap>
+
+    <sql id="selectPaperVo">
+        select id, paper_name, paper_code, paper_type, year, month, province, custom_name, paper_desc, business_type, business_id,
+               total_score, total_questions, duration, intro_audio_url, intro_audio_path,
+               intro_audio_duration, intro_text, auto_next_question, show_answer_immediately,
+               allow_review, practice_limit, trial_listen_enabled, trial_listen_audio_url, trial_listen_audio_path,
+               trial_listen_audio_duration, trial_listen_audio_text, trial_intro_audio_url, trial_intro_audio_path,
+               trial_intro_audio_duration, operate_listen_text, operate_listen_image_url, operate_listen_image_path,
+               notes, notes_display_mode, question_read_duration,
+               version, package_hash, package_size, last_package_time, status, create_by, create_time, update_by, update_time,
+               remark, del_flag
+        from paper
+    </sql>
+
+    <select id="selectByPaperCode" parameterType="String" resultMap="PaperResult">
+        <include refid="selectPaperVo"/>
+        where paper_code = #{paperCode} and del_flag = '0'
+    </select>
+
+    <select id="selectByBusiness" resultMap="PaperResult">
+        <include refid="selectPaperVo"/>
+        where business_type = #{businessType}
+          and business_id = #{businessId}
+          and del_flag = '0'
+        order by create_time desc
+    </select>
+
+    <select id="selectByYearMonthProvinceType" resultMap="PaperResult">
+        <include refid="selectPaperVo"/>
+        where year = #{year}
+          and month = #{month}
+          and province = #{province}
+          and paper_type = #{paperType}
+          and del_flag = '0'
+        limit 1
+    </select>
+
+</mapper>
+

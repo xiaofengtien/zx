@@ -1,0 +1,17 @@
+{
+    "mcpServers": {
+      "寸止": {
+        "command": "寸止",
+        "args": [],
+        "env": {}
+      },
+      "Context 7": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@upstash/context7-mcp@latest"
+        ],
+        "env": {}
+      }
+    }
+}

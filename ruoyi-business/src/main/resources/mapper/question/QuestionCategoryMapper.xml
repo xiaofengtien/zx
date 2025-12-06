@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.student.archive.mapper.question.QuestionCategoryMapper">
+
+    <!-- 通用查询映射结果 -->
+    <resultMap id="BaseResultMap" type="com.ruoyi.student.archive.domain.question.QuestionCategory">
+        <result column="name" property="name"/>
+        <result column="father_id" property="fatherId"/>
+        <result column="is_default" property="isDefault"/>
+        <result column="sort_num" property="sortNum"/>
+        <result column="status" property="status"/>
+    </resultMap>
+
+    <!-- 递归查询所有子分类ID -->
+    <select id="getChildCategoryIds" resultType="java.lang.Integer">
+        WITH RECURSIVE category_tree AS (
+            SELECT id, father_id
+            FROM question_category
+            WHERE id = #{categoryId} AND del_flag = '0'
+            UNION ALL
+            SELECT c.id, c.father_id
+            FROM question_category c
+            INNER JOIN category_tree ct ON c.father_id = ct.id
+            WHERE c.del_flag = '0'
+        )
+        SELECT id FROM category_tree
+    </select>
+
+    <!-- 统计分类下的题目数量（包含子分类） -->
+    <select id="countQuestionsByCategoryId" resultType="java.lang.Integer">
+        SELECT COUNT(DISTINCT q.id)
+        FROM question q
+        WHERE q.question_category_id IN (
+            WITH RECURSIVE category_tree AS (
+                SELECT id, father_id
+                FROM question_category
+                WHERE id = #{categoryId} AND del_flag = '0'
+                UNION ALL
+                SELECT c.id, c.father_id
+                FROM question_category c
+                INNER JOIN category_tree ct ON c.father_id = ct.id
+                WHERE c.del_flag = '0'
+            )
+            SELECT id FROM category_tree
+        )
+        AND q.del_flag = '0'
+    </select>
+
+    <!-- 获取同级分类中的最大排序号 -->
+    <select id="selectMaxSortNum" resultType="java.lang.Integer">
+        SELECT MAX(sort_num)
+        FROM question_category
+        WHERE father_id = #{fatherId}
+        AND del_flag = '0'
+    </select>
+
+    <!-- 批量查询所有分类的父子关系 -->
+    <select id="getAllCategoryParentRelations" resultType="com.ruoyi.student.archive.domain.dto.question.CategoryParentRelationDTO">
+        SELECT id AS categoryId, father_id AS fatherId
+        FROM question_category
+        WHERE del_flag = '0'
+    </select>
+
+</mapper> 

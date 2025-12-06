@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.student.archive.mapper.question.QuestionMediaMapper">
+
+    <resultMap id="QuestionMediaResult" type="com.ruoyi.student.archive.domain.question.QuestionMedia">
+        <id     property="id"            column="id"            />
+        <result property="questionId"     column="question_id"   />
+        <result property="paperId"         column="paper_id"     />
+        <result property="volumeId"       column="volume_id"     />
+        <result property="sectionId"     column="section_id"    />
+        <result property="intermissionId" column="intermission_id" />
+        <result property="mediaType"      column="media_type"    />
+        <result property="optionId"       column="option_id"     />
+        <result property="blankAreaId"    column="blank_area_id" />
+        <result property="mediaName"      column="media_name"    />
+        <result property="mediaPath"      column="media_path"    />
+        <result property="mediaUrl"       column="media_url"     />
+        <result property="mediaSize"      column="media_size"    />
+        <result property="mediaFormat"    column="media_format"  />
+        <result property="mediaDuration"  column="media_duration" />
+        <result property="isCompressed"   column="is_compressed" />
+        <result property="storageType"    column="storage_type"  />
+        <result property="createTime"     column="create_time"   />
+    </resultMap>
+
+    <sql id="selectQuestionMediaVo">
+        select id, question_id, paper_id, volume_id, section_id, intermission_id,
+               media_type, option_id, blank_area_id, media_name,
+               media_path, media_url, media_size, media_format, media_duration,
+               is_compressed, storage_type, create_time
+        from question_media
+    </sql>
+
+    <select id="selectByQuestionId" parameterType="Integer" resultMap="QuestionMediaResult">
+        <include refid="selectQuestionMediaVo"/>
+        where question_id = #{questionId}
+        order by media_type, id
+    </select>
+
+    <select id="selectByQuestionIdAndType" resultMap="QuestionMediaResult">
+        <include refid="selectQuestionMediaVo"/>
+        where question_id = #{questionId}
+          and media_type = #{mediaType}
+        order by id
+    </select>
+
+    <select id="selectByOptionId" parameterType="Integer" resultMap="QuestionMediaResult">
+        <include refid="selectQuestionMediaVo"/>
+        where option_id = #{optionId}
+        limit 1
+    </select>
+
+    <delete id="deleteByQuestionId" parameterType="Integer">
+        delete from question_media where question_id = #{questionId}
+    </delete>
+
+    <delete id="deleteByOptionIds" parameterType="java.util.List">
+        delete from question_media 
+        where option_id in
+        <foreach collection="list" item="optionId" open="(" separator="," close=")">
+            #{optionId}
+        </foreach>
+    </delete>
+
+</mapper>
+

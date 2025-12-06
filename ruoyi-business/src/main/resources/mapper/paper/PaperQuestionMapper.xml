@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.student.archive.mapper.paper.PaperQuestionMapper">
+
+    <resultMap id="PaperQuestionResult" type="com.ruoyi.student.archive.domain.paper.PaperQuestion">
+        <id     property="id"            column="id"            />
+        <result property="paperId"       column="paper_id"      />
+        <result property="questionId"    column="question_id"  />
+        <result property="sectionId"     column="section_id"   />
+        <result property="sectionOrder"  column="section_order" />
+        <result property="sortOrder"     column="sort_order"    />
+        <result property="score"        column="score"         />
+        <result property="createTime"    column="create_time"   />
+    </resultMap>
+
+    <sql id="selectPaperQuestionVo">
+        select id, paper_id, question_id, section_id, section_order, sort_order, score, create_time
+        from paper_question
+    </sql>
+
+    <select id="selectByPaperId" parameterType="Integer" resultMap="PaperQuestionResult">
+        <include refid="selectPaperQuestionVo"/>
+        where paper_id = #{paperId}
+        order by section_id asc, section_order asc, sort_order asc
+    </select>
+
+    <select id="selectByQuestionId" parameterType="Integer" resultMap="PaperQuestionResult">
+        <include refid="selectPaperQuestionVo"/>
+        where question_id = #{questionId}
+        order by create_time desc
+    </select>
+
+    <insert id="batchInsert" parameterType="java.util.List">
+        insert into paper_question (paper_id, question_id, section_id, section_order, sort_order, score, create_time)
+        values
+        <foreach collection="list" item="item" separator=",">
+            (#{item.paperId}, #{item.questionId}, #{item.sectionId}, #{item.sectionOrder}, #{item.sortOrder}, #{item.score}, #{item.createTime})
+        </foreach>
+    </insert>
+
+    <delete id="deleteByPaperId" parameterType="Integer">
+        delete from paper_question where paper_id = #{paperId}
+    </delete>
+
+</mapper>
+
