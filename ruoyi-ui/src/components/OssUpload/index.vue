@@ -189,7 +189,7 @@ export default {
   },
   data() {
     return {
-      uploadAction: '', // 上传地址（OSS直传地址）
+      uploadAction: 'http://up-as0.qiniup.com', // 上传地址（OSS直传地址，默认七牛云）
       uploadHeaders: {}, // 上传请求头
       uploadData: {}, // 上传额外参数
       fileList: [], // 文件列表
@@ -387,8 +387,17 @@ export default {
      */
     getFileNameFromUrl(url) {
       if (!url) return ''
-      const parts = url.split('/')
-      return parts[parts.length - 1] || ''
+      try {
+        // Strip query string (for signed URLs)
+        let cleanUrl = url.split('?')[0]
+        // Decode URI component (handle %2F etc)
+        cleanUrl = decodeURIComponent(cleanUrl)
+        const parts = cleanUrl.split('/')
+        return parts[parts.length - 1] || 'audio.mp3'
+      } catch (e) {
+        console.warn('[OssUpload] 解析文件名失败:', e)
+        return 'audio.mp3'
+      }
     },
 
     /**
@@ -467,8 +476,8 @@ export default {
       const filePath = this.generateFilePath(file.name)
       
       // 七牛云上传地址（使用后端返回的上传地址，确保区域正确）
-      // 如果后端没有返回 uploadUrl，则使用通用上传域名（会自动选择最优节点）
-      this.uploadAction = this.ossConfig.uploadUrl || 'https://up.qiniup.com'
+      // 如果后端没有返回 uploadUrl，则使用 HTTP 上传域名（避免 SSL 问题）
+      this.uploadAction = this.ossConfig.uploadUrl || 'http://up-as0.qiniup.com'
       
       // 七牛云上传参数
       this.uploadData = {
@@ -487,8 +496,8 @@ export default {
         // 解析阿里云token（JSON格式）
         const tokenData = JSON.parse(this.ossConfig.token)
         
-        // 生成文件路径
-        const filePath = this.generateFilePath(file.name)
+        // 生成文件路径（注意：后端 token.dir 已包含基础路径，这里只生成日期+文件名）
+        const filePath = this.generateFilePathWithoutPrefix(file.name)
         const fullKey = (tokenData.dir || '') + filePath
         
         // 阿里云PostObject上传地址
@@ -506,12 +515,12 @@ export default {
         this.uploadHeaders = {}
       } catch (error) {
         console.error('解析阿里云token失败:', error)
-        throw new Error('解析上传凭证失败')
+            throw new Error('解析上传凭证失败')
       }
     },
 
     /**
-     * 生成文件路径（与后端逻辑保持一致）
+     * 生成唯一的文件路径
      * 格式：exam/question/2025/11/20/filename_timestamp_uuid.ext
      */
     generateFilePath(fileName) {
@@ -533,6 +542,15 @@ export default {
         baseName = fileName.substring(0, lastDotIndex)
       }
 
+      // 检查文件名是否包含非 ASCII 字符（中文等）
+      // 如果包含，使用随机字符串代替，避免七牛云签名 URL 中文编码问题
+      const hasNonAscii = /[^\x00-\x7F]/.test(baseName)
+      if (hasNonAscii) {
+        // 使用 "audio" 或 "file" 前缀 + UUID，保持文件名简洁
+        const prefix = extension.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac)$/) ? 'audio' : 'file'
+        baseName = `${prefix}_${this.generateUUID().substring(0, 16)}`
+      }
+
       // 生成唯一文件名：原文件名_时间戳_UUID前8位.扩展名
       const timestamp = Date.now()
       const uuid = this.generateUUID().substring(0, 8)
@@ -548,6 +566,48 @@ export default {
       // 构建完整路径
       const pathPrefix = this.pathPrefix || 'exam/question'
       return `${pathPrefix}/${datePath}/${uniqueFileName}`
+    },
+
+    /**
+     * 生成文件路径（不含前缀）
+     * 用于阿里云上传，因为后端 token.dir 已包含前缀
+     * 格式：2025/11/20/filename_timestamp_uuid.ext
+     */
+    generateFilePathWithoutPrefix(fileName) {
+      if (!fileName) {
+        fileName = this.generateUUID() + '.tmp'
+      }
+
+      // 提取文件扩展名
+      let extension = ''
+      let baseName = fileName
+      const lastDotIndex = fileName.lastIndexOf('.')
+      if (lastDotIndex > 0) {
+        extension = fileName.substring(lastDotIndex)
+        baseName = fileName.substring(0, lastDotIndex)
+      }
+
+      // 检查文件名是否包含非 ASCII 字符（中文等）
+      const hasNonAscii = /[^\x00-\x7F]/.test(baseName)
+      if (hasNonAscii) {
+        const prefix = extension.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac)$/) ? 'audio' : 'file'
+        baseName = `${prefix}_${this.generateUUID().substring(0, 16)}`
+      }
+
+      // 生成唯一文件名
+      const timestamp = Date.now()
+      const uuid = this.generateUUID().substring(0, 8)
+      const uniqueFileName = `${baseName}_${timestamp}_${uuid}${extension}`
+
+      // 按日期分目录存储：yyyy/MM/dd
+      const date = new Date()
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      const datePath = `${year}/${month}/${day}`
+
+      // 只返回日期路径 + 文件名（不含前缀）
+      return `${datePath}/${uniqueFileName}`
     },
 
     /**

@@ -20,6 +20,7 @@ import java.io.Serializable;
 @NoArgsConstructor
 public class QuestionAnswer extends BaseEntity implements Serializable {
 
+    @TableId(value = "id", type = IdType.AUTO)
     private Integer id;
 
     /**
@@ -55,4 +56,4 @@ public class QuestionAnswer extends BaseEntity implements Serializable {
      * 是否启用 1-是 0-否
      */
     private Integer status;
-} 
+}

@@ -96,4 +96,10 @@ public class SectionDataBO implements Serializable {
      */
     @Valid
     private List<QuestionDataBO> questions;
+
+    /**
+     * 该大题下的题目组列表（嵌套结构）
+     */
+    @Valid
+    private List<PaperQuestionGroupBO> questionGroups;
 }

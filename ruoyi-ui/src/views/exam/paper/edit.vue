@@ -119,19 +119,34 @@
         </el-form-item>
 
         <el-form-item label="注意事项音频" prop="introAudioUrl" required>
-          <oss-upload
-            ref="notesAudioUpload"
-            v-model="form.introAudioUrl"
-            :limit="1"
-            accept=".mp3,.wav,.ogg,.m4a,.aac"
-            :file-size="10"
-            tip="只能上传音频文件（MP3、WAV等），且不超过10MB，仅支持一个文件，二次上传将直接替换"
-            path-prefix="exam/question"
-            list-type="text"
-            @change="handleNotesAudioChange"
-            @progress="(event, file) => handleUploadProgress('notesAudio', event.percent < 100)"
-            @preview="handleIntroAudioPreview"
-          />
+          <div style="display: flex; align-items: flex-start;">
+            <div style="flex: 1;">
+              <oss-upload
+                v-if="showUpload.notes"
+                ref="notesAudioUpload"
+                v-model="form.introAudioUrl"
+                :limit="1"
+                accept=".mp3,.wav,.ogg,.m4a,.aac"
+                :file-size="10"
+                tip="只能上传音频文件（MP3、WAV等），且不超过10MB，仅支持一个文件，二次上传将直接替换"
+                path-prefix="exam/question"
+                list-type="text"
+                @change="handleNotesAudioChange"
+                @progress="(event, file) => handleUploadProgress('notesAudio', event.percent < 100)"
+                @preview="handleIntroAudioPreview"
+              />
+            </div>
+            <el-button 
+              type="primary" 
+              size="small" 
+              style="margin-left: 10px; margin-top: 5px;" 
+              @click="generateAudio('notes')"
+              :loading="generatingAudio.notes"
+              icon="el-icon-microphone"
+            >
+              生成音频
+            </el-button>
+          </div>
           <div v-if="uploadStatus.notesAudio" style="color: #E6A23C; font-size: 12px; margin-top: 5px;">
             请先等待上传完成
           </div>
@@ -164,19 +179,34 @@
               </div>
             </el-form-item>
             <el-form-item label="试听音频" prop="trialListenAudioUrl">
-              <oss-upload
-                ref="trialListenAudioUpload"
-                v-model="form.trialListenAudioUrl"
-                :limit="1"
-                accept=".mp3,.wav,.ogg,.m4a,.aac"
-                :file-size="10"
-                tip="只能上传音频文件，且不超过10MB，仅支持一个文件，二次上传将直接替换。此音频需要用户点击'播放试听音频'按钮时播放"
-                path-prefix="exam/question"
-                list-type="text"
-                @change="handleTrialListenAudioChange"
-                @progress="(event, file) => handleUploadProgress('trialListenAudio', event.percent < 100)"
-                @preview="handleTrialListenAudioPreview"
-              />
+              <div style="display: flex; align-items: flex-start;">
+                <div style="flex: 1;">
+                  <oss-upload
+                    v-if="showUpload.trial"
+                    ref="trialListenAudioUpload"
+                    v-model="form.trialListenAudioUrl"
+                    :limit="1"
+                    accept=".mp3,.wav,.ogg,.m4a,.aac"
+                    :file-size="10"
+                    tip="只能上传音频文件，且不超过10MB，仅支持一个文件，二次上传将直接替换。此音频需要用户点击'播放试听音频'按钮时播放"
+                    path-prefix="exam/question"
+                    list-type="text"
+                    @change="handleTrialListenAudioChange"
+                    @progress="(event, file) => handleUploadProgress('trialListenAudio', event.percent < 100)"
+                    @preview="handleTrialListenAudioPreview"
+                  />
+                </div>
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  style="margin-left: 10px; margin-top: 5px;" 
+                  @click="generateAudio('trial')"
+                  :loading="generatingAudio.trial"
+                  icon="el-icon-microphone"
+                >
+                  生成音频
+                </el-button>
+              </div>
               <div v-if="uploadStatus.trialListenAudio" style="color: #E6A23C; font-size: 12px; margin-top: 5px;">
                 请先等待上传完成
               </div>
@@ -437,7 +467,7 @@
 
 <script>
 import {
-  getPaper, updatePaper, getPaperQuestionList
+  getPaper, updatePaper, getPaperQuestionList, generateTTS
 } from "@/api/exam/paper"
 import { getToken } from "@/utils/auth"
 import { encodeUrlFileName, normalizeMediaUrl } from "@/utils/media"
@@ -551,7 +581,7 @@ export default {
           { required: true, message: "考试时长不能为空", trigger: "blur" }
         ],
         paperDesc: [
-          { required: true, message: "试卷描述不能为空", trigger: "blur" }
+          { required: false, message: "试卷描述不能为空", trigger: "blur" }
         ],
         notes: [
           { required: true, message: "注意事项不能为空", trigger: "blur" }
@@ -610,7 +640,18 @@ export default {
       volumeSliderVisible: false,
       volumeTooltipVisible: false,
       volumeTooltipTimer: null,
+      volumeTooltipTimer: null,
       handleKeydown: null,
+      // TTS 生成状态
+      generatingAudio: {
+        notes: false,
+        trial: false
+      },
+      // 组件显示控制
+      showUpload: {
+        notes: true,
+        trial: true
+      },
       // 已选择的题目列表（包含 id, title, type, subjectId, score 等字段）
       selectedQuestions: [],
       // 当前激活的标签页
@@ -694,7 +735,13 @@ export default {
     async resolveMediaPreviewUrl(rawUrl) {
       if (!rawUrl) return ''
       try {
-        const response = await getMediaDownloadUrl({ url: rawUrl })
+        // 清除URL中的签名参数（阿里云OSS签名参数），避免重复签名
+        let cleanUrl = rawUrl
+        if (rawUrl.includes('?') && (rawUrl.includes('Expires=') || rawUrl.includes('Signature='))) {
+          cleanUrl = rawUrl.split('?')[0]
+          console.log('[resolveMediaPreviewUrl] 清除签名参数后的URL:', cleanUrl)
+        }
+        const response = await getMediaDownloadUrl({ url: cleanUrl })
         const signedUrl = response?.downloadUrl || response?.data?.downloadUrl
         if (response?.code === 200 && signedUrl) {
           return signedUrl
@@ -759,6 +806,69 @@ export default {
         this.selectedQuestions = []
       })
     },
+    /** 生成音频 */
+    async generateAudio(type) {
+      let text = ''
+      if (type === 'notes') {
+        text = this.form.notes
+      } else if (type === 'trial') {
+        text = this.form.trialListenAudioText
+      }
+
+      // 优化富文本清洗逻辑：保留换行
+      let plainText = text || ''
+      // 将块级元素结束标签和 br 替换为换行符
+      plainText = plainText.replace(/<(?:br|\/p|\/div|li)[\s\/]*>/gi, '\n')
+      // 去除所有 HTML 标签
+      plainText = plainText.replace(/<[^>]+>/g, '')
+      // 处理常见实体
+      plainText = plainText.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      // 去除多余空行
+      plainText = plainText.replace(/\n\s*\n/g, '\n').trim()
+
+      if (!plainText) {
+        this.$modal.msgWarning('请先输入文本内容')
+        return
+      }
+
+      this.generatingAudio[type] = true
+      try {
+        const res = await generateTTS({
+          text: plainText,
+          voice: 'xiaoyun' // 默认发音人
+        })
+        
+        const ossUrl = res.data && res.data.oss_url ? res.data.oss_url : res.oss_url
+        const duration = res.data && res.data.duration ? res.data.duration : res.duration
+
+        if (ossUrl) {
+          if (type === 'notes') {
+            this.form.introAudioUrl = ossUrl
+            this.form.introAudioDuration = duration
+            this.$message.success('生成注意事项音频成功')
+            // 强制重置
+            this.showUpload.notes = false
+            this.$nextTick(() => {
+              this.showUpload.notes = true
+            })
+          } else if (type === 'trial') {
+            this.form.trialListenAudioUrl = ossUrl
+            this.form.trialListenAudioDuration = duration
+             this.$message.success('生成试听音频成功')
+             // 强制重置
+             this.showUpload.trial = false
+             this.$nextTick(() => {
+               this.showUpload.trial = true
+             })
+          }
+        }
+      } catch (e) {
+        console.error('生成音频失败', e)
+      } finally {
+        this.generatingAudio[type] = false
+      }
+    },
+
     /** 提交按钮 */
     async submitForm() {
       // 检查是否有正在上传的文件
@@ -771,6 +881,8 @@ export default {
       if (this.form.operateListenImageUrl && !this.form.operateListenImage) {
         this.form.operateListenImage = this.form.operateListenImageUrl
       }
+
+
 
       this.$refs["form"].validate(async valid => {
         if (valid) {

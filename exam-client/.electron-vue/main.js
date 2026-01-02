@@ -4,10 +4,19 @@ const fs = require('fs')
 const { execSync } = require('child_process')
 const isDev = process.env.NODE_ENV === 'development'
 
+// 静态引入数据库服务，确保 webpack 能正确打包依赖
+const Database = require('../src/database/db')
+const LicenseService = require('../src/database/licenseService')
+const LoginService = require('../src/database/loginService')
+const SyncService = require('../src/database/syncService')
+const PaperService = require('../src/database/paperService')
+const AnswerService = require('../src/database/answerService')
+
 // 配置模块解析路径，确保能够正确加载 node_modules 中的依赖
 // 这对于 Electron 主进程正确解析依赖非常重要
 // 只设置 NODE_PATH 环境变量，这是最安全、最兼容的方式
-const projectRoot = path.resolve(__dirname, '..')
+// 只设置 NODE_PATH 环境变量，这是最安全、最兼容的方式
+const projectRoot = app.getAppPath()
 const nodeModulesPath = path.join(projectRoot, 'node_modules')
 
 // 设置 NODE_PATH 环境变量（最兼容的方式，不会破坏现有功能）
@@ -30,10 +39,10 @@ app.setName('zx-exam-client')
 function setAppIconEarly() {
   let iconPath = null
   let appIcon = null
-  
+
   // 尝试多个可能的图标路径（按优先级）
   const possibleIconPaths = []
-  
+
   if (isDev) {
     // 开发环境：尝试源文件路径
     possibleIconPaths.push(
@@ -53,7 +62,7 @@ function setAppIconEarly() {
       path.join(__dirname, '../../build/icon.ico') // Windows
     )
   }
-  
+
   // 查找第一个存在的图标文件
   for (const iconP of possibleIconPaths) {
     if (fs.existsSync(iconP)) {
@@ -61,7 +70,7 @@ function setAppIconEarly() {
       break
     }
   }
-  
+
   // 如果找到图标文件，创建 nativeImage 对象（但不立即设置 Dock）
   // 注意：app.dock 只有在 app.on('ready') 之后才可用
   if (iconPath) {
@@ -78,7 +87,7 @@ function setAppIconEarly() {
   } else {
     console.warn('⚠️ 未找到图标文件，将使用默认 Electron 图标')
   }
-  
+
   return { iconPath, appIcon }
 }
 
@@ -132,7 +141,7 @@ let isOnline = false // 网络状态
 // 初始化数据库
 function initDatabase() {
   try {
-    const Database = require(path.join(__dirname, '../src/database/db'))
+    // Database 已在顶部静态引入
     db = new Database()
     console.log('Database initialized successfully')
   } catch (error) {
@@ -143,7 +152,7 @@ function initDatabase() {
 // 检测网络状态
 async function checkNetworkStatus() {
   try {
-    const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
+    const API_BASE_URL = app.isPackaged ? 'http://47.94.192.7:8818/prod-api' : (process.env.API_BASE_URL || 'http://localhost:8080')
     // 尝试访问公共同步接口，如果成功则说明有网络
     const axios = require('axios')
     const response = await axios.get(`${API_BASE_URL}/student/syncPublicData`, {
@@ -154,7 +163,7 @@ async function checkNetworkStatus() {
     })
     return response.status === 200
   } catch (error) {
-    console.log('网络检测失败:', error.message)
+    console.log('[Network] ⚠ 网络检测失败:', error.message)
     return false
   }
 }
@@ -165,18 +174,17 @@ async function syncDataOnStartup() {
     console.error('数据库未初始化，无法同步数据')
     return { success: false, message: '数据库未初始化' }
   }
-  
+
   try {
-    const SyncService = require(path.join(__dirname, '../src/database/syncService'))
     const syncService = new SyncService(db)
     const result = await syncService.syncPublicData()
-    
+
     if (result.success) {
       console.log('✓ 启动时数据同步成功（业务数据和字典数据）')
     } else {
-      console.warn('启动时数据同步失败:', result.message)
+      console.warn('[Sync] ⚠ 启动时数据同步失败:', result.message)
     }
-    
+
     return result
   } catch (error) {
     console.error('启动时数据同步异常:', error)
@@ -260,7 +268,7 @@ function createSplashWindow() {
     </body>
     </html>
   `
-  
+
   splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHTML)}`)
   splashWindow.center()
 }
@@ -269,14 +277,15 @@ function createWindow() {
   // 使用提前加载的图标（如果存在）
   // 如果提前加载失败，则使用默认图标
   const windowIcon = earlyAppIcon || earlyIconPath || null
-  
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1024,
+    height: 768,
     title: '择学考试端', // 窗口标题使用中文显示
     icon: windowIcon, // 使用提前加载的图标
     backgroundColor: '#667eea', // 设置背景色，避免白色闪烁
     show: false, // 先不显示，等加载完成后再显示
+    autoHideMenuBar: true, // 隐藏Windows菜单栏 (Alt键可临时显示)
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -334,7 +343,8 @@ function createWindow() {
   })
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:9080')
+    const DEV_PORT = process.env.DEV_PORT ? parseInt(process.env.DEV_PORT, 10) : 9081
+    mainWindow.loadURL(`http://localhost:${DEV_PORT}`)
     // 已禁用开发者工具，不再自动打开
     // mainWindow.webContents.openDevTools()
   } else {
@@ -342,7 +352,7 @@ function createWindow() {
     // 在打包后的应用中，文件在 app.asar 中
     const htmlPath = path.join(__dirname, '../dist/web/index.html')
     console.log('Attempting to load HTML from:', htmlPath)
-    
+
     // 检查文件是否存在
     if (fs.existsSync(htmlPath)) {
       console.log('Loading HTML from:', htmlPath)
@@ -354,7 +364,7 @@ function createWindow() {
         path.join(app.getAppPath(), 'dist/web/index.html'),
         path.join(__dirname, '../../dist/web/index.html')
       ]
-      
+
       let loaded = false
       for (const altPath of alternativePaths) {
         try {
@@ -368,7 +378,7 @@ function createWindow() {
           console.error('Failed to load from:', altPath, e)
         }
       }
-      
+
       if (!loaded) {
         console.error('Could not find index.html. Tried paths:', [htmlPath, ...alternativePaths])
         // 关闭启动画面
@@ -431,7 +441,7 @@ function createWindow() {
     // 阻止默认的右键菜单（包含"检查元素"选项）
     event.preventDefault()
   })
-  
+
   // 额外防护：尝试通过代码打开开发者工具时也会被阻止
   mainWindow.webContents.on('devtools-opened', () => {
     // 如果开发者工具被打开（通过其他方式），立即关闭
@@ -455,7 +465,7 @@ app.whenReady().then(async () => {
   // 输出应用路径信息
   console.log('app.getAppPath():', app.getAppPath())
   console.log('process.resourcesPath:', process.resourcesPath)
-  
+
   // 在 macOS 上，再次确认 Dock 图标已设置（在创建窗口之前）
   // 这可以确保即使 ready 事件中的设置失败，这里也会设置
   if (process.platform === 'darwin' && app.dock) {
@@ -472,26 +482,26 @@ app.whenReady().then(async () => {
       }
     }
   }
-  
+
   // 先创建启动画面
   createSplashWindow()
-  
+
   // 初始化数据库
   initDatabase()
-  
+
   // 检测网络状态
-  console.log('检测网络状态...')
+  console.log('[Network] 检测网络状态...')
   isOnline = await checkNetworkStatus()
-  console.log('网络状态:', isOnline ? '在线' : '离线')
-  
+  console.log('[Network] 网络状态:', isOnline ? '在线' : '离线')
+
   // 如果有网络，同步所有业务数据和字典数据
   if (isOnline) {
-    console.log('网络可用，开始同步所有业务数据和字典数据...')
+    console.log('[Network] ✓ 网络可用，开始同步所有业务数据和字典数据...')
     await syncDataOnStartup()
   } else {
-    console.log('网络不可用，跳过数据同步')
+    console.log('[Network] ⚠ 网络不可用，跳过数据同步')
   }
-  
+
   // 创建主窗口（但不立即显示）
   createWindow()
 
@@ -518,29 +528,103 @@ app.on('before-quit', () => {
   }
 })
 
+// IPC 通信：授权相关
+ipcMain.handle('license:activate', async (event, licenseCode) => {
+  console.log('[IPC] 收到激活请求:', licenseCode)
+
+  if (!db) {
+    console.error('数据库未初始化')
+    return { success: false, message: '数据库未初始化' }
+  }
+
+  try {
+    // LicenseService 已在顶部静态引入
+    const licenseService = new LicenseService(db)
+    return await licenseService.activate(licenseCode)
+  } catch (error) {
+    console.error('激活失败:', error)
+    return { success: false, message: error.message }
+  }
+})
+
+ipcMain.handle('license:verify', async (event, licenseCode, deviceId) => {
+  if (!db) {
+    return { valid: false, message: '数据库未初始化' }
+  }
+
+  try {
+    const licenseService = new LicenseService(db)
+    return await licenseService.verify(licenseCode, deviceId)
+  } catch (error) {
+    console.error('验证失败:', error)
+    return { valid: false, message: error.message }
+  }
+})
+
+ipcMain.handle('license:getLocal', async (event) => {
+  if (!db) {
+    return null
+  }
+
+  try {
+    const licenseService = new LicenseService(db)
+    return licenseService.getLocalLicense()
+  } catch (error) {
+    console.error('获取本地授权信息失败:', error)
+    return null
+  }
+})
+
+ipcMain.handle('license:isActivated', async (event) => {
+  if (!db) {
+    return false
+  }
+
+  try {
+    const licenseService = new LicenseService(db)
+    return licenseService.isActivated()
+  } catch (error) {
+    console.error('检查激活状态失败:', error)
+    return false
+  }
+})
+
+ipcMain.handle('license:validateTime', async (event) => {
+  if (!db) {
+    return { valid: true } // 数据库未初始化时跳过验证
+  }
+
+  try {
+    const licenseService = new LicenseService(db)
+    return await licenseService.validateTimeSync()
+  } catch (error) {
+    console.error('时间校验失败:', error)
+    return { valid: true } // 出错时允许继续
+  }
+})
+
 // IPC 通信：登录相关
 ipcMain.handle('login:online', async (event, { username, password, code, uuid }) => {
-  console.log('IPC收到登录请求:', { username, code: code ? '已提供' : '未提供', uuid: uuid ? '已提供' : '未提供' })
-  
+  console.log('[IPC] 收到登录请求:', { username, code: code ? '已提供' : '未提供', uuid: uuid ? '已提供' : '未提供' })
+
   if (!db) {
     console.error('数据库未初始化')
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const LoginService = require(path.join(__dirname, '../src/database/loginService'))
+    // LoginService 已在顶部静态引入
     const loginService = new LoginService(db)
     const result = await loginService.onlineLogin(username, password, code, uuid)
-    console.log('登录服务返回结果:', result)
-    
+    console.log('[Auth] 登录服务返回结果:', result)
+
     // 登录成功后，使用 token 同步所有数据（包括所有学员档案和字典数据）
     // 注意：当前学员的档案信息已经在 getInfo 接口返回并保存，这里同步是为了获取所有学员档案和字典数据
     if (result.success && result.token) {
-      console.log('登录成功，开始同步所有数据（所有学员档案和字典数据）...')
+      console.log('[Auth] ✓ 登录成功，开始同步所有数据（所有学员档案和字典数据）...')
       try {
-        const SyncService = require(path.join(__dirname, '../src/database/syncService'))
         const syncService = new SyncService(db)
         const syncResult = await syncService.syncAll(result.token)
-        
+
         if (syncResult.success) {
           console.log('✓ 所有数据同步成功（包括所有学员档案和字典数据）')
         } else {
@@ -551,7 +635,7 @@ ipcMain.handle('login:online', async (event, { username, password, code, uuid })
         // 不抛出异常，登录仍然成功，因为当前学员的数据已经从 getInfo 获取
       }
     }
-    
+
     return result
   } catch (error) {
     console.error('Online login error:', error)
@@ -565,7 +649,7 @@ ipcMain.handle('login:offline', async (event, { username, password, offlineCrede
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const LoginService = require(path.join(__dirname, '../src/database/loginService'))
+    // LoginService 已在顶部静态引入
     const loginService = new LoginService(db)
     return await loginService.offlineLogin(username, password, offlineCredential)
   } catch (error) {
@@ -581,7 +665,7 @@ ipcMain.handle('login:getStudentInfo', async (event, token) => {
     return null
   }
   try {
-    const LoginService = require(path.join(__dirname, '../src/database/loginService'))
+    // LoginService 已在顶部静态引入
     const loginService = new LoginService(db)
     return await loginService.getStudentInfo(token)
   } catch (error) {
@@ -595,7 +679,6 @@ ipcMain.handle('login:getStudentPapers', async (event, studentAccount) => {
     return []
   }
   try {
-    const LoginService = require(path.join(__dirname, '../src/database/loginService'))
     const loginService = new LoginService(db)
     return loginService.getStudentPapers(studentAccount)
   } catch (error) {
@@ -610,7 +693,6 @@ ipcMain.handle('login:getStudentPapersByUserId', async (event, userId) => {
     return []
   }
   try {
-    const LoginService = require(path.join(__dirname, '../src/database/loginService'))
     const loginService = new LoginService(db)
     return loginService.getStudentPapersByUserId(userId)
   } catch (error) {
@@ -625,7 +707,6 @@ ipcMain.handle('dict:getDictData', async (event, dictType) => {
     return []
   }
   try {
-    const LoginService = require(path.join(__dirname, '../src/database/loginService'))
     const loginService = new LoginService(db)
     return loginService.getDictData(dictType)
   } catch (error) {
@@ -644,15 +725,23 @@ ipcMain.handle('app:getNetworkStatus', () => {
   return isOnline
 })
 
+// IPC 通信：获取 API 基础地址
+// IPC 通信：获取 API 基础地址
+ipcMain.handle('app:getApiBaseUrl', () => {
+  // 使用 app.isPackaged 判断是否打包环境，强制返回生产地址
+  // 这种方式不需要依赖 webpack 的 DefinePlugin，也不依赖 process.env
+  return app.isPackaged ? 'http://47.94.192.7:8818/prod-api' : 'http://localhost:8080'
+})
+
 // IPC 通信：手动触发数据同步
 ipcMain.handle('sync:syncAll', async (event, token = null) => {
   if (!db) {
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const SyncService = require(path.join(__dirname, '../src/database/syncService'))
+    // SyncService 已在顶部静态引入
     const syncService = new SyncService(db)
-    return await syncService.syncAll(token)
+    return await syncService.syncStudentData(license)
   } catch (error) {
     console.error('数据同步失败:', error)
     return { success: false, message: error.message || '数据同步失败' }
@@ -665,7 +754,6 @@ ipcMain.handle('archive:getByAccount', async (event, studentAccount) => {
     return null
   }
   try {
-    const SyncService = require(path.join(__dirname, '../src/database/syncService'))
     const syncService = new SyncService(db)
     return syncService.getStudentArchiveByAccount(studentAccount)
   } catch (error) {
@@ -680,7 +768,6 @@ ipcMain.handle('archive:getByUserId', async (event, userId) => {
     return null
   }
   try {
-    const SyncService = require(path.join(__dirname, '../src/database/syncService'))
     const syncService = new SyncService(db)
     return syncService.getStudentArchiveByUserId(userId)
   } catch (error) {
@@ -697,18 +784,17 @@ ipcMain.handle('paper:getPapersByType', async (event, paperType) => {
   try {
     // 获取实际的数据库对象
     const database = db.getDB()
-    
-    // 从SQLite的paper表中查询指定类型的试卷（包含year, month, province字段）
+
+    // 从SQLite的paper表中查询指定类型的试卷
     const papers = database.prepare(`
       SELECT id, paper_name, paper_code, paper_type, paper_desc,
-             year, month, province, custom_name,
              total_score, total_questions, duration, status,
              version, package_hash, last_package_time
       FROM paper
       WHERE paper_type = ? AND status = 1
       ORDER BY id DESC
     `).all(paperType)
-    
+
     console.log(`根据试卷类型查询试卷，类型: ${paperType}，找到 ${papers.length} 条记录`)
     return papers
   } catch (error) {
@@ -720,263 +806,153 @@ ipcMain.handle('paper:getPapersByType', async (event, paperType) => {
 // IPC 通信：根据试卷ID列表查询试卷列表
 // 优化：支持离线模式，如果paper表中没有数据，从ZIP包的manifest.json中提取
 ipcMain.handle('paper:getPapersByIds', async (event, paperIds) => {
-  if (!db) {
-    return []
-  }
+  if (!db) return []
+
   try {
-    if (!paperIds || !Array.isArray(paperIds) || paperIds.length === 0) {
-      console.log('试卷ID列表为空，返回空数组')
-      return []
-    }
-    
-    // 获取实际的数据库对象
+    if (!paperIds || !Array.isArray(paperIds) || paperIds.length === 0) return []
+
+    const numericIds = paperIds.map(id => typeof id === 'string' ? parseInt(id, 10) : id)
     const database = db.getDB()
-    
-    // 构建IN查询的占位符
-    const placeholders = paperIds.map(() => '?').join(',')
-    
-    // 1. 优先从SQLite的paper表中查询指定ID的试卷
-    let papers = database.prepare(`
+    const placeholders = numericIds.map(() => '?').join(',')
+    const sql = `
       SELECT id, paper_name, paper_code, paper_type, paper_desc,
              total_score, total_questions, duration, status,
-             year, month, province, version, package_hash, last_package_time,
+             version, package_hash, last_package_time,
              practice_limit, enable_start_time, enable_end_time
-      FROM paper
-      WHERE id IN (${placeholders}) AND status = 1
-      ORDER BY id DESC
-    `).all(...paperIds)
-    
-    console.log(`根据试卷ID列表查询试卷，ID列表: ${JSON.stringify(paperIds)}，从paper表找到 ${papers.length} 条记录`)
-    
-    // 2. 如果paper表中没有找到所有试卷，尝试从ZIP包的manifest.json中提取（离线降级方案）
-    if (papers.length < paperIds.length) {
-      console.log(`paper表中只找到 ${papers.length} 条记录，但需要 ${paperIds.length} 条，尝试从ZIP包manifest.json中提取...`)
-      
-      const PaperService = require(path.join(__dirname, '../src/database/paperService'))
-      const paperService = new PaperService(db)
-      
-      // 找出缺失的试卷ID
-      const foundIds = new Set(papers.map(p => p.id))
-      const missingIds = paperIds.filter(id => !foundIds.has(id))
-      
-      console.log(`缺失的试卷ID: ${JSON.stringify(missingIds)}`)
-      
-      // 尝试从ZIP包中提取试卷信息
-      // 方案A：如果paper表中有paper_code记录，直接使用
-      // 方案B：如果paper表中没有记录，扫描所有ZIP包，从manifest.json中查找匹配的paperId
-      const paperRecordsWithCode = []
-      const paperRecordsWithoutCode = []
-      
-      for (const missingId of missingIds) {
-        const paperRecord = database.prepare(`
-          SELECT id, paper_code, version FROM paper WHERE id = ? LIMIT 1
-        `).get(missingId)
-        
-        if (paperRecord && paperRecord.paper_code) {
-          paperRecordsWithCode.push({ id: missingId, paperCode: paperRecord.paper_code, version: paperRecord.version || 1 })
-        } else {
-          paperRecordsWithoutCode.push(missingId)
-        }
-      }
-      
-      // 处理有paper_code的记录（直接提取）
-      for (const record of paperRecordsWithCode) {
-        try {
-          const { id: missingId, paperCode, version } = record
-          console.log(`尝试从ZIP包提取试卷信息: paperId=${missingId}, paperCode=${paperCode}, version=${version}`)
-          
-          // 尝试从快速启动包或完整包中提取manifest.json
-          let manifest = null
-          
-          // 优先尝试快速启动包
-          try {
-            const quickStartResult = await paperService.extractQuickStartPackage(paperCode, version)
-            if (quickStartResult && quickStartResult.manifest) {
-              manifest = quickStartResult.manifest
-              console.log(`✓ 从快速启动包提取到manifest: ${paperCode}`)
-            }
-          } catch (error) {
-            console.log(`快速启动包不存在或解压失败: ${error.message}`)
-          }
-          
-          // 如果快速启动包失败，尝试完整包
-          if (!manifest) {
-            try {
-              const extractResult = await paperService.extractPaperPackage(paperCode, version)
-              if (extractResult && extractResult.manifest) {
-                manifest = extractResult.manifest
-                console.log(`✓ 从完整包提取到manifest: ${paperCode}`)
-              }
-            } catch (error) {
-              console.log(`完整包不存在或解压失败: ${error.message}`)
-            }
-          }
-          
-          // 如果成功提取到manifest，更新或插入paper表记录
-          if (manifest && manifest.paperId === missingId) {
-            await updateOrInsertPaperFromManifest(database, manifest, missingId, paperCode, version)
-          }
-        } catch (error) {
-          console.warn(`从ZIP包提取试卷信息失败: paperId=${record.id}，错误: ${error.message}`)
-        }
-      }
-      
-      // 处理没有paper_code的记录（扫描所有ZIP包）
-      if (paperRecordsWithoutCode.length > 0) {
-        console.log(`扫描所有ZIP包，查找试卷ID: ${JSON.stringify(paperRecordsWithoutCode)}`)
-        
-        try {
-          const packageBasePath = path.join(app.getPath('userData'), 'paper_packages')
-          if (fs.existsSync(packageBasePath)) {
-            const files = fs.readdirSync(packageBasePath)
-            const zipFiles = files.filter(file => 
-              file.endsWith('.zip') && (file.endsWith('_quick.zip') || !file.includes('_quick'))
-            )
-            
-            console.log(`找到 ${zipFiles.length} 个ZIP文件，开始扫描manifest.json...`)
-            
-            for (const zipFile of zipFiles) {
+      FROM paper WHERE id IN (${placeholders}) AND status = 1 ORDER BY id DESC
+    `
+
+    // Step 1: 查询本地 SQLite
+    let papers = database.prepare(sql).all(...numericIds)
+    console.log(`[PaperSync] 查询试卷 ${JSON.stringify(numericIds)} → 本地找到 ${papers.length}/${numericIds.length} 条`)
+
+    if (papers.length >= numericIds.length) return papers
+
+    // Step 2: 缺失试卷，尝试同步
+    const foundIds = new Set(papers.map(p => p.id))
+    const missingIds = numericIds.filter(id => !foundIds.has(id))
+    console.log(`[PaperSync] 缺失试卷ID: ${JSON.stringify(missingIds)}，开始同步...`)
+
+    // 获取 token
+    let tokenValue = null
+    try {
+      const tokenPromise = require('electron').BrowserWindow.getAllWindows()[0]?.webContents?.executeJavaScript('localStorage.getItem("token")')
+      tokenValue = await tokenPromise
+    } catch (e) { /* 离线状态 */ }
+
+    // Step 2A: 联网状态 → 从后端 API 同步
+    if (tokenValue) {
+      try {
+        const axios = require('axios')
+        const API_BASE_URL = app.isPackaged ? 'http://47.94.192.7:8818/prod-api' : (process.env.API_BASE_URL || 'http://localhost:8080')
+        const response = await axios.post(
+          `${API_BASE_URL}/student/sync/paper/listByIds`,
+          { ids: missingIds },
+          { headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenValue}` } }
+        )
+
+        if (response.data?.code === 200 && response.data?.data) {
+          const remotePapers = response.data.data
+          console.log(`[PaperSync] 后端返回 ${remotePapers.length} 条试卷`)
+
+          for (const paper of remotePapers) {
+            const paperCode = paper.paperCode || paper.paper_code
+            if (!database.prepare(`SELECT id FROM paper WHERE id = ? LIMIT 1`).get(paper.id)) {
               try {
-                // 解析文件名：{paperCode}_v{version}.zip 或 {paperCode}_v{version}_quick.zip
-                const match = zipFile.match(/^(.+)_v(\d+)(_quick)?\.zip$/)
-                if (!match) continue
-                
-                const paperCode = match[1]
-                const version = parseInt(match[2], 10)
-                const isQuickStart = !!match[3]
-                
-                // 尝试提取manifest.json
-                let manifest = null
-                
-                if (isQuickStart) {
-                  try {
-                    const quickStartResult = await paperService.extractQuickStartPackage(paperCode, version)
-                    if (quickStartResult && quickStartResult.manifest) {
-                      manifest = quickStartResult.manifest
-                    }
-                  } catch (error) {
-                    // 忽略错误，继续尝试完整包
-                  }
-                } else {
-                  try {
-                    const extractResult = await paperService.extractPaperPackage(paperCode, version)
-                    if (extractResult && extractResult.manifest) {
-                      manifest = extractResult.manifest
-                    }
-                  } catch (error) {
-                    // 忽略错误，继续下一个文件
-                  }
-                }
-                
-                // 如果manifest中的paperId在缺失列表中，更新或插入paper表
-                if (manifest && manifest.paperId && paperRecordsWithoutCode.includes(manifest.paperId)) {
-                  console.log(`✓ 从ZIP包 ${zipFile} 中找到匹配的试卷: paperId=${manifest.paperId}, paperCode=${paperCode}`)
-                  await updateOrInsertPaperFromManifest(database, manifest, manifest.paperId, paperCode, version)
-                  
-                  // 从缺失列表中移除
-                  const index = paperRecordsWithoutCode.indexOf(manifest.paperId)
-                  if (index > -1) {
-                    paperRecordsWithoutCode.splice(index, 1)
-                  }
-                  
-                  // 如果所有缺失的试卷都已找到，提前退出
-                  if (paperRecordsWithoutCode.length === 0) {
-                    break
-                  }
-                }
-              } catch (error) {
-                console.warn(`扫描ZIP包失败: ${zipFile}，错误: ${error.message}`)
-              }
+                database.prepare(`
+                  INSERT INTO paper (id, paper_name, paper_code, paper_type, paper_desc, year, month, province, custom_name,
+                    total_score, total_questions, duration, practice_limit, enable_start_time, enable_end_time,
+                    version, package_hash, package_size, last_package_time, status, create_time)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                  paper.id, paper.paperName || paper.paper_name || paperCode, paperCode,
+                  paper.paperType || paper.paper_type || null, paper.paperDesc || paper.paper_desc || null,
+                  paper.year || null, paper.month || null, paper.province || null, paper.customName || paper.custom_name || null,
+                  paper.totalScore || paper.total_score || 0, paper.totalQuestions || paper.total_questions || 0,
+                  paper.duration || null, paper.practiceLimit || paper.practice_limit || null,
+                  paper.enableStartTime || paper.enable_start_time || null, paper.enableEndTime || paper.enable_end_time || null,
+                  paper.version || 1, paper.packageHash || paper.package_hash || null, paper.packageSize || paper.package_size || null,
+                  paper.lastPackageTime || paper.last_package_time ? new Date(paper.lastPackageTime || paper.last_package_time).getTime() : null,
+                  1, Date.now()
+                )
+                console.log(`[PaperSync] ✓ 从后端同步: ID=${paper.id}`)
+              } catch (e) { console.warn(`[PaperSync] 插入失败: ID=${paper.id}, ${e.message}`) }
             }
           }
-        } catch (error) {
-          console.warn(`扫描ZIP包目录失败: ${error.message}`)
+          papers = database.prepare(sql).all(...numericIds)
         }
+      } catch (apiError) {
+        console.warn(`[PaperSync] 后端API同步失败: ${apiError.message}，降级为本地ZIP包`)
       }
-      
-      // 辅助函数：从manifest更新或插入paper表记录
-      async function updateOrInsertPaperFromManifest(database, manifest, paperId, paperCode, version) {
-        const existingPaper = database.prepare(`
-          SELECT id FROM paper WHERE id = ? LIMIT 1
-        `).get(paperId)
-        
-        if (existingPaper) {
-          // 更新现有记录（从manifest中获取的信息）
-          database.prepare(`
-            UPDATE paper 
-            SET paper_name = ?, paper_code = ?, paper_type = ?, paper_desc = ?,
-                total_score = ?, total_questions = ?, duration = ?,
-                practice_limit = ?, trial_listen_enabled = ?, trial_listen_text = ?,
-                notes = ?, notes_display_mode = ?,
-                version = ?, status = 1, update_time = ?
-            WHERE id = ?
-          `).run(
-            manifest.paperName || paperCode,
-            manifest.paperCode || paperCode,
-            manifest.paperType || null,
-            manifest.paperDesc || null,
-            manifest.totalScore || 0,
-            manifest.totalQuestions || 0,
-            manifest.duration || null,
-            manifest.practiceLimit || 0,
-            manifest.trialListenEnabled ? 1 : 0,
-            manifest.trialListenText || null,
-            manifest.notes || null,
-            manifest.notesDisplayMode || 'before_exam',
-            manifest.version || version,
-            Date.now(),
-            paperId
-          )
-          console.log(`✓ 已从manifest.json更新paper表记录: paperId=${paperId}, paperCode=${paperCode}`)
-        } else {
-          // 插入新记录（注意：manifest.json不包含year, month, province等字段，这些字段为null）
-          database.prepare(`
-            INSERT INTO paper 
-            (id, paper_name, paper_code, paper_type, paper_desc,
-             total_score, total_questions, duration,
-             practice_limit, trial_listen_enabled, trial_listen_text,
-             notes, notes_display_mode,
-             version, status, create_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            manifest.paperId || paperId,
-            manifest.paperName || paperCode,
-            manifest.paperCode || paperCode,
-            manifest.paperType || null,
-            manifest.paperDesc || null,
-            manifest.totalScore || 0,
-            manifest.totalQuestions || 0,
-            manifest.duration || null,
-            manifest.practiceLimit || 0,
-            manifest.trialListenEnabled ? 1 : 0,
-            manifest.trialListenText || null,
-            manifest.notes || null,
-            manifest.notesDisplayMode || 'before_exam',
-            manifest.version || version,
-            1, // status = 1 (启用)
-            Date.now()
-          )
-          console.log(`✓ 已从manifest.json插入paper表新记录: paperId=${paperId}, paperCode=${paperCode}`)
-        }
-      }
-      
-      // 3. 重新查询paper表（可能已经更新）
-      papers = database.prepare(`
-        SELECT id, paper_name, paper_code, paper_type, paper_desc,
-               total_score, total_questions, duration, status,
-               year, month, province, version, package_hash, last_package_time,
-               practice_limit, enable_start_time, enable_end_time
-        FROM paper
-        WHERE id IN (${placeholders}) AND status = 1
-        ORDER BY id DESC
-      `).all(...paperIds)
-      
-      console.log(`从ZIP包提取后，重新查询paper表，找到 ${papers.length} 条记录`)
+    } else {
+      console.log(`[PaperSync] 离线状态，跳过后端同步`)
     }
-    
+
+    // Step 2B: 仍有缺失 → 从本地 ZIP 包的 manifest.json 提取
+    const stillFoundIds = new Set(papers.map(p => p.id))
+    const stillMissingIds = numericIds.filter(id => !stillFoundIds.has(id))
+
+    if (stillMissingIds.length > 0) {
+      console.log(`[PaperSync] 仍缺失 ${stillMissingIds.length} 条，尝试从ZIP包提取...`)
+      const paperService = new PaperService(db)
+
+      // 扫描 ZIP 包
+      try {
+        const packageBasePath = path.join(app.getPath('userData'), 'paper_packages')
+        if (fs.existsSync(packageBasePath)) {
+          const zipFiles = fs.readdirSync(packageBasePath).filter(f => f.endsWith('.zip'))
+
+          for (const zipFile of zipFiles) {
+            const match = zipFile.match(/^(.+)_v(\d+)(_quick)?\.zip$/)
+            if (!match) continue
+
+            const paperCode = match[1]
+            const version = parseInt(match[2], 10)
+            const isQuickStart = !!match[3]
+            let manifest = null
+
+            try {
+              if (isQuickStart) {
+                const result = await paperService.extractQuickStartPackage(paperCode, version)
+                manifest = result?.manifest
+              } else {
+                const result = await paperService.extractPaperPackage(paperCode, version)
+                manifest = result?.manifest
+              }
+            } catch (e) { /* 忽略 */ }
+
+            if (manifest?.paperId && stillMissingIds.includes(manifest.paperId)) {
+              if (!database.prepare(`SELECT id FROM paper WHERE id = ? LIMIT 1`).get(manifest.paperId)) {
+                database.prepare(`
+                  INSERT INTO paper (id, paper_name, paper_code, paper_type, paper_desc,
+                    total_score, total_questions, duration, practice_limit,
+                    trial_listen_enabled, trial_listen_text, notes, notes_display_mode,
+                    version, status, create_time)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                  manifest.paperId, manifest.paperName || paperCode, manifest.paperCode || paperCode,
+                  manifest.paperType || null, manifest.paperDesc || null,
+                  manifest.totalScore || 0, manifest.totalQuestions || 0, manifest.duration || null,
+                  manifest.practiceLimit || 0, manifest.trialListenEnabled ? 1 : 0,
+                  manifest.trialListenText || null, manifest.notes || null,
+                  manifest.notesDisplayMode || 'before_exam', manifest.version || version, 1, Date.now()
+                )
+                console.log(`[PaperSync] ✓ 从ZIP包同步: ID=${manifest.paperId}`)
+              }
+              stillMissingIds.splice(stillMissingIds.indexOf(manifest.paperId), 1)
+              if (stillMissingIds.length === 0) break
+            }
+          }
+        }
+      } catch (e) { console.warn(`[PaperSync] 扫描ZIP包失败: ${e.message}`) }
+
+      papers = database.prepare(sql).all(...numericIds)
+    }
+
+    console.log(`[PaperSync] 最终返回 ${papers.length}/${numericIds.length} 条试卷`)
     return papers
   } catch (error) {
-    console.error('根据试卷ID列表查询试卷失败:', error)
+    console.error(`[PaperSync] 错误: ${error.message}`)
     return []
   }
 })
@@ -989,26 +965,25 @@ ipcMain.handle('paper:getPaperData', async (event, paperId) => {
   }
   try {
     console.log(`paper:getPaperData: 开始获取试卷数据，paperId=${paperId}`)
-    
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
+
     const paperService = new PaperService(db)
-    
+
     // 获取试卷信息
     const paper = db.getDB().prepare(`
       SELECT id, paper_code, version FROM paper WHERE id = ? LIMIT 1
     `).get(paperId)
-    
+
     if (!paper) {
       console.error(`paper:getPaperData: 试卷不存在，paperId=${paperId}`)
       throw new Error(`试卷不存在（ID: ${paperId}）`)
     }
-    
+
     console.log(`paper:getPaperData: 找到试卷，paper_code=${paper.paper_code}, version=${paper.version || 'null'}`)
-    
+
     // 检查版本号，如果为null则使用默认值1
     const version = paper.version || 1
     console.log(`paper:getPaperData: 使用版本号 ${version}`)
-    
+
     // 检查完整ZIP包是否存在
     const packageInfo = db.getDB().prepare(`
       SELECT paper_code, version, is_active FROM paper_package 
@@ -1016,27 +991,27 @@ ipcMain.handle('paper:getPaperData', async (event, paperId) => {
       ORDER BY version DESC
       LIMIT 1
     `).get(paper.paper_code)
-    
+
     if (packageInfo) {
       // 完整包存在，使用完整包
       console.log(`paper:getPaperData: 找到完整ZIP包，version=${packageInfo.version}`)
-      
+
       // 解压完整试卷包并获取 manifest 和 questions
       try {
         const extractResult = await paperService.extractPaperPackage(paper.paper_code, version)
-        
+
         if (!extractResult) {
           console.error(`paper:getPaperData: 解压完整试卷包失败，paper_code=${paper.paper_code}`)
           throw new Error('解压试卷包失败')
         }
-        
+
         if (!extractResult.manifest || !extractResult.questions) {
           console.error(`paper:getPaperData: 解压结果不完整，paper_code=${paper.paper_code}`)
           throw new Error('试卷包数据不完整')
         }
-        
+
         console.log(`paper:getPaperData: 成功从完整包获取试卷数据，paper_code=${paper.paper_code}`)
-        
+
         return {
           manifest: extractResult.manifest,
           questions: extractResult.questions,
@@ -1044,41 +1019,41 @@ ipcMain.handle('paper:getPaperData', async (event, paperId) => {
         }
       } catch (extractError) {
         // 检测到ZIP损坏，自动清理（但保留版本信息，以便重新下载）
-        if (extractError.message && (extractError.message.includes('Invalid or unsupported zip format') || 
-            extractError.message.includes('No END header found'))) {
+        if (extractError.message && (extractError.message.includes('Invalid or unsupported zip format') ||
+          extractError.message.includes('No END header found'))) {
           console.error(`❌ 检测到ZIP包损坏，自动清理: ${paper.paper_code} v${packageInfo.version}`)
-          
+
           try {
             // 清理损坏的包（但保留paper表的版本信息，以便重新下载）
             await paperService.cleanCorruptedPackage(paper.paper_code, packageInfo.version)
-            
+
             // 清除下载状态
             await paperService.updateDownloadStatus(paperId, paper.paper_code, 'error', 0, 0, 0, 'ZIP文件损坏，已自动清理')
-            
+
             console.log(`✓ 已清理损坏的ZIP包，保留版本信息以便重新下载`)
           } catch (deleteError) {
             console.error(`清理损坏数据失败:`, deleteError)
           }
-          
+
           // 抛出友好的错误信息
           throw new Error('试卷包文件已损坏，已自动清理，请返回试卷列表重新下载')
         }
-        
+
         // 其他错误直接抛出
         throw extractError
       }
     }
-    
+
     // 完整包不存在，尝试使用快速启动包
     console.log(`paper:getPaperData: 完整ZIP包不存在，尝试使用快速启动包，paper_code=${paper.paper_code}`)
-    
+
     try {
       // 尝试解压快速启动包（只包含manifest.json和trial_listen/、intro/等）
       const quickStartResult = await paperService.extractQuickStartPackage(paper.paper_code, version)
-      
+
       if (quickStartResult && quickStartResult.manifest) {
         console.log(`paper:getPaperData: 成功从快速启动包获取manifest，paper_code=${paper.paper_code}`)
-        
+
         // 从快速启动包获取manifest，questions为空数组（完整包正在后台下载）
         return {
           manifest: quickStartResult.manifest,
@@ -1090,7 +1065,7 @@ ipcMain.handle('paper:getPaperData', async (event, paperId) => {
     } catch (error) {
       console.warn(`paper:getPaperData: 快速启动包也不存在或解压失败，paper_code=${paper.paper_code}，错误: ${error.message}`)
     }
-    
+
     // 快速启动包也不存在，抛出错误
     throw new Error(`试卷包未同步，请先同步试卷包（试卷编码: ${paper.paper_code}）`)
   } catch (error) {
@@ -1110,17 +1085,16 @@ ipcMain.handle('paper:getVolumes', async (event, paperId) => {
   try {
     // 优先从本地JSON文件读取（从manifest中获取volumes）
     try {
-      const PaperService = require(path.join(__dirname, '../src/database/paperService'))
       const paperService = new PaperService(db)
-      
+
       const paper = db.getDB().prepare(`
         SELECT id, paper_code, version FROM paper WHERE id = ? LIMIT 1
       `).get(paperId)
-      
+
       if (paper) {
         const version = paper.version || 1
         const paperCode = paper.paper_code
-        
+
         // 检查完整包或快速启动包是否存在
         const packageInfo = db.getDB().prepare(`
           SELECT paper_code, version, is_active FROM paper_package 
@@ -1128,13 +1102,13 @@ ipcMain.handle('paper:getVolumes', async (event, paperId) => {
           ORDER BY version DESC
           LIMIT 1
         `).get(paperCode)
-        
+
         if (packageInfo) {
           // 从本地JSON文件读取manifest
           const extractResult = await paperService.extractPaperPackage(paperCode, version)
           if (extractResult && extractResult.manifest && extractResult.manifest.volumes) {
             console.log(`paper:getVolumes: 从本地JSON文件读取volumes数据，paper_code=${paperCode}`)
-            
+
             // 从manifest中提取volumes
             const volumes = extractResult.manifest.volumes.map(volume => ({
               id: volume.id || volume.volumeId,
@@ -1143,7 +1117,7 @@ ipcMain.handle('paper:getVolumes', async (event, paperId) => {
               volume_name: String(volume.volumeName || volume.volume_name || ''),
               volume_order: volume.volumeOrder || volume.volume_order || 0
             })).sort((a, b) => (a.volume_order || 0) - (b.volume_order || 0))
-            
+
             if (volumes.length > 0) {
               return volumes
             }
@@ -1154,7 +1128,7 @@ ipcMain.handle('paper:getVolumes', async (event, paperId) => {
             const quickStartResult = await paperService.extractQuickStartPackage(paperCode, version)
             if (quickStartResult && quickStartResult.manifest && quickStartResult.manifest.volumes) {
               console.log(`paper:getVolumes: 从快速启动包读取volumes数据，paper_code=${paperCode}`)
-              
+
               const volumes = quickStartResult.manifest.volumes.map(volume => ({
                 id: volume.id || volume.volumeId,
                 paper_id: paperId,
@@ -1162,7 +1136,7 @@ ipcMain.handle('paper:getVolumes', async (event, paperId) => {
                 volume_name: String(volume.volumeName || volume.volume_name || ''),
                 volume_order: volume.volumeOrder || volume.volume_order || 0
               })).sort((a, b) => (a.volume_order || 0) - (b.volume_order || 0))
-              
+
               if (volumes.length > 0) {
                 return volumes
               }
@@ -1175,7 +1149,7 @@ ipcMain.handle('paper:getVolumes', async (event, paperId) => {
     } catch (jsonError) {
       console.warn(`paper:getVolumes: 从本地JSON文件读取失败，降级到数据库查询: ${jsonError.message}`)
     }
-    
+
     // 降级方案：从数据库读取
     console.log(`paper:getVolumes: 从数据库读取volumes数据（降级方案），paperId=${paperId}`)
     const database = db.getDB()
@@ -1185,7 +1159,7 @@ ipcMain.handle('paper:getVolumes', async (event, paperId) => {
       WHERE paper_id = ?
       ORDER BY volume_order ASC
     `).all(paperId)
-    
+
     // 确保所有文本字段都是字符串类型，正确处理中文
     return volumes.map(v => ({
       ...v,
@@ -1212,7 +1186,7 @@ ipcMain.handle('paper:getSections', async (event, paperId, volumeId = null, volu
       WHERE paper_id = ?
     `
     const params = [paperId]
-    
+
     // 优先使用 volumeId，如果没有则使用 volumeCode 查找对应的 volume_id
     if (volumeId) {
       query += ' AND volume_id = ?'
@@ -1222,7 +1196,7 @@ ipcMain.handle('paper:getSections', async (event, paperId, volumeId = null, volu
       const volumeRecord = database.prepare(`
         SELECT id FROM paper_volume WHERE paper_id = ? AND volume_code = ? LIMIT 1
       `).get(paperId, volumeCode)
-      
+
       if (volumeRecord) {
         query += ' AND volume_id = ?'
         params.push(volumeRecord.id)
@@ -1231,9 +1205,9 @@ ipcMain.handle('paper:getSections', async (event, paperId, volumeId = null, volu
         return []
       }
     }
-    
+
     query += ' ORDER BY volume_id ASC, section_order ASC'
-    
+
     const sections = database.prepare(query).all(...params)
     return sections
   } catch (error) {
@@ -1270,14 +1244,14 @@ ipcMain.handle('paper:getMediaFiles', async (event, params) => {
   try {
     const database = db.getDB()
     const { paperId, volumeId, sectionId, intermissionId, questionId, mediaType } = params
-    
+
     let query = `
       SELECT id, media_name, media_path, media_url, media_format, media_duration
       FROM question_media
       WHERE 1=1
     `
     const queryParams = []
-    
+
     if (paperId) {
       query += ' AND paper_id = ?'
       queryParams.push(paperId)
@@ -1302,7 +1276,7 @@ ipcMain.handle('paper:getMediaFiles', async (event, params) => {
       query += ' AND media_type = ?'
       queryParams.push(mediaType)
     }
-    
+
     const mediaFiles = database.prepare(query).all(...queryParams)
     return mediaFiles
   } catch (error) {
@@ -1318,22 +1292,21 @@ ipcMain.handle('paper:getQuestions', async (event, paperId, sectionId = null) =>
     return []
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
-    
+
     // 获取试卷信息
     const paper = db.getDB().prepare(`
       SELECT id, paper_code, version FROM paper WHERE id = ? LIMIT 1
     `).get(paperId)
-    
+
     if (!paper) {
       console.error(`paper:getQuestions: 试卷不存在，paperId=${paperId}`)
       return []
     }
-    
+
     const version = paper.version || 1
     const paperCode = paper.paper_code
-    
+
     // 优先从本地JSON文件读取questions数据
     try {
       // 检查完整包是否存在
@@ -1343,40 +1316,57 @@ ipcMain.handle('paper:getQuestions', async (event, paperId, sectionId = null) =>
         ORDER BY version DESC
         LIMIT 1
       `).get(paperCode)
-      
+
       if (packageInfo) {
         // 完整包存在，从本地JSON文件读取
         const extractResult = await paperService.extractPaperPackage(paperCode, version)
         if (extractResult && extractResult.questions && Array.isArray(extractResult.questions)) {
           console.log(`paper:getQuestions: 从本地JSON文件读取题目数据，paper_code=${paperCode}，题目数量=${extractResult.questions.length}`)
-          
+
           // 如果指定了sectionId，需要过滤题目
           if (sectionId) {
-            // 获取section的volume_code
+            // 获取section的信息
             const section = db.getDB().prepare(`
-              SELECT volume_code FROM paper_section WHERE id = ? LIMIT 1
+              SELECT id, volume_id, volume_code, section_order, section_name FROM paper_section WHERE id = ? LIMIT 1
             `).get(sectionId)
-            
+
             if (section) {
+              // 调试：打印JSON文件中所有题目的sectionId
+              const allSectionIds = [...new Set(extractResult.questions.map(q => q.section_id || q.sectionId))]
+              console.log(`paper:getQuestions: JSON文件中所有题目的sectionId: [${allSectionIds.join(', ')}]，要查找的sectionId=${sectionId}，类型=${typeof sectionId}`)
+
               // 从questions.json中筛选出属于该section的题目
-              // questions.json中的题目可能通过section_id或volume_code关联
+              // paper_section表的id现在是manifest中的原始section id，可以直接匹配
+              // 注意：需要处理类型不一致的情况（JSON中可能是字符串，数据库中是数字）
               const filteredQuestions = extractResult.questions.filter(q => {
-                // 检查题目是否属于该section（通过section_id或volume_code匹配）
-                return (q.section_id === sectionId) || 
-                       (q.sectionId === sectionId) ||
-                       (q.volume_code === section.volume_code) ||
-                       (q.volumeCode === section.volume_code)
+                const qSectionId = q.section_id || q.sectionId
+                // 使用宽松比较（==）或转换为相同类型后比较
+                return qSectionId == sectionId || String(qSectionId) === String(sectionId)
               })
-              
-              // 按sort_order或question_sort排序
-              filteredQuestions.sort((a, b) => {
-                const sortA = a.sort_order || a.question_sort || a.sortOrder || 0
-                const sortB = b.sort_order || b.question_sort || b.sortOrder || 0
+
+              // 去重：根据题目ID去除重复的题目
+              const seenIds = new Set()
+              const uniqueQuestions = filteredQuestions.filter(q => {
+                const qId = q.id || q.question_id || q.questionId
+                if (seenIds.has(qId)) {
+                  console.warn(`paper:getQuestions: 发现重复题目，id=${qId}，已跳过`)
+                  return false
+                }
+                seenIds.add(qId)
+                return true
+              })
+
+              console.log(`paper:getQuestions: 筛选后题目数量=${filteredQuestions.length}，去重后=${uniqueQuestions.length}，sectionId=${sectionId}，volume_code=${section.volume_code}`)
+
+              // 按sectionOrder排序（题目在大题中的顺序）
+              uniqueQuestions.sort((a, b) => {
+                const sortA = a.sectionOrder || a.section_order || a.sort_order || a.question_sort || 0
+                const sortB = b.sectionOrder || b.section_order || b.sort_order || b.question_sort || 0
                 return sortA - sortB
               })
-              
+
               // 确保所有文本字段都是字符串类型，正确处理中文
-              return filteredQuestions.map(q => ({
+              return uniqueQuestions.map(q => ({
                 ...q,
                 id: q.id || q.question_id || q.questionId,
                 question_id: q.question_id || q.questionId || q.id,
@@ -1387,12 +1377,12 @@ ipcMain.handle('paper:getQuestions', async (event, paperId, sectionId = null) =>
                 explanation_text: String(q.explanation_text || q.explanationText || ''),
                 section_id: sectionId,
                 section_order: q.section_order || q.sectionOrder || 0,
-                sort_order: q.sort_order || q.question_sort || q.sortOrder || 0,
+                sort_order: q.sort_order || q.question_sort || q.sectionOrder || 0,
                 score: q.score || 0
               }))
             }
           }
-          
+
           // 如果没有指定sectionId，返回所有题目
           // 确保所有文本字段都是字符串类型，正确处理中文
           return extractResult.questions.map(q => ({
@@ -1417,7 +1407,7 @@ ipcMain.handle('paper:getQuestions', async (event, paperId, sectionId = null) =>
     } catch (jsonError) {
       console.warn(`paper:getQuestions: 从本地JSON文件读取失败，降级到数据库查询: ${jsonError.message}`)
     }
-    
+
     // 降级方案：从数据库读取（如果JSON文件不存在或读取失败）
     console.log(`paper:getQuestions: 从数据库读取题目数据（降级方案），paperId=${paperId}, sectionId=${sectionId || 'all'}`)
     const database = db.getDB()
@@ -1430,16 +1420,16 @@ ipcMain.handle('paper:getQuestions', async (event, paperId, sectionId = null) =>
       WHERE pq.paper_id = ?
     `
     const params = [paperId]
-    
+
     if (sectionId) {
       query += ' AND pq.section_id = ?'
       params.push(sectionId)
     }
-    
+
     query += ' ORDER BY pq.section_order ASC, pq.sort_order ASC'
-    
+
     const questions = database.prepare(query).all(...params)
-    
+
     // 确保所有文本字段都是字符串类型，正确处理中文
     return questions.map(q => ({
       ...q,
@@ -1450,6 +1440,23 @@ ipcMain.handle('paper:getQuestions', async (event, paperId, sectionId = null) =>
     }))
   } catch (error) {
     console.error('获取题目列表失败:', error)
+    return []
+  }
+})
+
+// IPC 通信：获取大题下的题目组
+ipcMain.handle('paper:getQuestionGroups', async (event, paperId, sectionId) => {
+  if (!db) return []
+  try {
+    // 从数据库读取题目组数据
+    const groups = db.getDB().prepare(`
+      SELECT * FROM paper_question_group 
+      WHERE section_id = ?
+      ORDER BY group_order ASC
+    `).all(sectionId)
+    return groups || []
+  } catch (error) {
+    console.error('获取题目组失败:', error)
     return []
   }
 })
@@ -1469,7 +1476,7 @@ ipcMain.handle('system:setVolume', async (event, volume) => {
   try {
     // volume 范围：0-100
     const clampedVolume = Math.max(0, Math.min(100, volume))
-    
+
     if (process.platform === 'darwin') {
       // macOS: 使用 osascript 设置音量
       // macOS 音量范围是 0-100，但实际输出音量范围是 0-7（或 0-100，取决于系统设置）
@@ -1574,7 +1581,6 @@ ipcMain.handle('answer:startExam', async (event, params) => {
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.startExam(params)
   } catch (error) {
@@ -1588,7 +1594,6 @@ ipcMain.handle('answer:saveQuestionResult', async (event, params) => {
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.saveQuestionResult(params)
   } catch (error) {
@@ -1602,7 +1607,6 @@ ipcMain.handle('answer:submitVolume', async (event, params) => {
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.submitVolume(params)
   } catch (error) {
@@ -1616,7 +1620,6 @@ ipcMain.handle('answer:submitExam', async (event, params) => {
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.submitExam(params)
   } catch (error) {
@@ -1630,7 +1633,6 @@ ipcMain.handle('answer:updateVolumeStatus', async (event, paperInfoId, volumeCod
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.updateVolumeStatus(paperInfoId, volumeCode, status)
   } catch (error) {
@@ -1644,7 +1646,6 @@ ipcMain.handle('answer:markIntermissionPlayed', async (event, paperInfoId, fromV
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.markIntermissionPlayed(paperInfoId, fromVolume, toVolume)
   } catch (error) {
@@ -1660,14 +1661,14 @@ ipcMain.handle('answer:getQuestionResults', async (event, params) => {
   try {
     const database = db.getDB()
     const { paperInfoId, paperId, appUserId } = params
-    
+
     const results = database.prepare(`
       SELECT question_id, answer_ids, user_answer, result, question_sort
       FROM app_user_paper_question_result
       WHERE paper_id = ? AND app_user_id = ?
       ORDER BY question_sort ASC
     `).all(paperId, appUserId)
-    
+
     return results
   } catch (error) {
     console.error('获取答题结果失败:', error)
@@ -1680,7 +1681,6 @@ ipcMain.handle('answer:getPaperInfoList', async (event, appUserId, paperId = nul
     return []
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.getPaperInfoList(appUserId, paperId)
   } catch (error) {
@@ -1694,7 +1694,6 @@ ipcMain.handle('answer:getPaperInfo', async (event, paperInfoId) => {
     return null
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.getPaperInfo(paperInfoId)
   } catch (error) {
@@ -1708,7 +1707,6 @@ ipcMain.handle('answer:clearPaperResult', async (event, { paperInfoId, paperId }
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.clearPaperResult(paperInfoId, paperId)
   } catch (error) {
@@ -1722,12 +1720,45 @@ ipcMain.handle('answer:checkPracticeLimit', async (event, paperId, appUserId) =>
     return { allowed: false, practiceCount: 0, practiceLimit: 0 }
   }
   try {
-    const AnswerService = require(path.join(__dirname, '../src/database/answerService'))
     const answerService = new AnswerService(db)
     return await answerService.checkPracticeLimit(paperId, appUserId)
   } catch (error) {
     console.error('检查练习次数限制失败:', error)
     return { allowed: false, practiceCount: 0, practiceLimit: 0 }
+  }
+})
+
+// IPC 通信：同步答题结果到服务端
+ipcMain.handle('answer:syncToServer', async (event, paperInfoId, token) => {
+  if (!db) {
+    return { success: false, message: '数据库未初始化' }
+  }
+  try {
+    const answerService = new AnswerService(db)
+    console.log(`✓ [answer:syncToServer] 开始同步答题结果到服务端，paperInfoId=${paperInfoId}`)
+    const result = await answerService.syncToServer(paperInfoId, token)
+    console.log(`✓ [answer:syncToServer] 同步结果:`, result)
+    return result
+  } catch (error) {
+    console.error('同步答题结果到服务端失败:', error)
+    return { success: false, message: error.message }
+  }
+})
+
+// IPC 通信：同步所有未同步的答题结果（用于网络恢复时自动同步）
+ipcMain.handle('answer:syncAllUnsynced', async (event, token) => {
+  if (!db) {
+    return { success: false, message: '数据库未初始化', total: 0, successCount: 0, failCount: 0 }
+  }
+  try {
+    const answerService = new AnswerService(db)
+    console.log('✓ [answer:syncAllUnsynced] 开始同步所有未同步的答题结果')
+    const result = await answerService.syncAllUnsynced(token)
+    console.log(`✓ [answer:syncAllUnsynced] 同步完成，总数=${result.total}，成功=${result.successCount}，失败=${result.failCount}`)
+    return result
+  } catch (error) {
+    console.error('同步所有未同步的答题结果失败:', error)
+    return { success: false, message: error.message, total: 0, successCount: 0, failCount: 0 }
   }
 })
 
@@ -1737,7 +1768,7 @@ ipcMain.handle('paper:syncPaperPackage', async (event, { paper, token }) => {
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
+    // PaperService 已在顶部静态引入
     const paperService = new PaperService(db)
     const result = await paperService.syncPaperPackage(paper, token)
     return result
@@ -1753,22 +1784,21 @@ ipcMain.handle('paper:syncPaperPackageById', async (event, { paperId, token, onl
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
-    
+
     // 从数据库查询 paper 信息
     const paper = db.getDB().prepare(`
       SELECT id, paper_code, paper_name, version, package_hash, package_size
       FROM paper
       WHERE id = ?
     `).get(paperId)
-    
+
     if (!paper) {
       return { success: false, message: `未找到试卷，paperId=${paperId}` }
     }
-    
+
     console.log(`[syncPaperPackageById] paperId=${paperId}, paperCode=${paper.paper_code}, version=${paper.version}`)
-    
+
     // 调用 syncPaperPackage
     const result = await paperService.syncPaperPackage(paper, token, null, onlyQuickStart)
     return result
@@ -1783,7 +1813,6 @@ ipcMain.handle('paper:checkPackageExists', async (event, paperId) => {
     return false
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
     return paperService.checkPackageExists(paperId)
   } catch (error) {
@@ -1798,7 +1827,6 @@ ipcMain.handle('paper:refreshPaperVersion', async (event, { paperId, token }) =>
     return { success: false, message: '数据库未初始化' }
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
     return await paperService.refreshPaperVersionFromServer(paperId, token)
   } catch (error) {
@@ -1813,7 +1841,6 @@ ipcMain.handle('paper:checkAnyPackageExists', async (event, paperId) => {
     return null
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
     return paperService.checkAnyPackageExists(paperId)
   } catch (error) {
@@ -1845,7 +1872,6 @@ ipcMain.handle('paper:checkQuickStartPackageExists', async (event, paperId) => {
     return false
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
     return paperService.checkQuickStartPackageExists(paperId)
   } catch (error) {
@@ -1859,7 +1885,7 @@ ipcMain.handle('paper:getLocalPaperVersion', async (event, paperId) => {
     return null
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
+    // PaperService 已在顶部静态引入
     const paperService = new PaperService(db)
     return paperService.getLocalPaperVersion(paperId)
   } catch (error) {
@@ -1888,7 +1914,6 @@ ipcMain.handle('paper:getDownloadStatus', async (event, paperId) => {
     return null
   }
   try {
-    const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
     return paperService.getDownloadStatus(paperId)
   } catch (error) {
@@ -1904,21 +1929,21 @@ ipcMain.handle('paper:downloadFullPackage', async (event, { paperId, token }) =>
   }
   try {
     console.log(`[Main Process] 开始手动下载完整包，paperId=${paperId}`)
-    
+
     const PaperService = require(path.join(__dirname, '../src/database/paperService'))
     const paperService = new PaperService(db)
-    
+
     // 获取试卷信息
     const paper = db.getDB().prepare(`
       SELECT id, paper_code, version, package_hash FROM paper WHERE id = ? LIMIT 1
     `).get(paperId)
-    
+
     if (!paper) {
       return { success: false, message: `试卷不存在（ID: ${paperId}）` }
     }
-    
+
     console.log(`[Main Process] 试卷信息: paper_code=${paper.paper_code}, version=${paper.version}`)
-    
+
     // 下载完整包
     const result = await paperService.downloadPaperPackage(
       paper.id,
@@ -1930,14 +1955,14 @@ ipcMain.handle('paper:downloadFullPackage', async (event, { paperId, token }) =>
         console.log(`[Main Process] 下载进度: ${progress}%`)
       }
     )
-    
+
     if (result.success) {
       console.log(`[Main Process] ✓ 完整包下载成功: ${paper.paper_code} v${paper.version}`)
-      
+
       // 解压完整包
       await paperService.extractPaperPackage(paper.paper_code, paper.version)
       console.log(`[Main Process] ✓ 完整包解压成功`)
-      
+
       return { success: true, message: '完整包下载并解压成功' }
     } else {
       console.error(`[Main Process] 完整包下载失败: ${result.message}`)
@@ -1983,7 +2008,7 @@ ipcMain.handle('paper:clearDownloadStatus', async (event, paperId) => {
 ipcMain.on('app:log', (event, { level, message, ...args }) => {
   const timestamp = new Date().toISOString()
   const prefix = `[${timestamp}] [Renderer]`
-  
+
   switch (level) {
     case 'error':
       console.error(prefix, message, ...Object.values(args))
@@ -2016,4 +2041,3 @@ ipcMain.handle('app:showNotification', async (event, { title, body, icon }) => {
   }
   return { success: false, message: '通知功能不支持' }
 })
-

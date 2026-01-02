@@ -124,19 +124,34 @@
         </el-form-item>
 
         <el-form-item label="注意事项音频" prop="introAudioUrl" required>
-          <oss-upload
-            ref="notesAudioUpload"
-            v-model="form.introAudioUrl"
-            :limit="1"
-            accept=".mp3,.wav,.ogg,.m4a,.aac"
-            :file-size="10"
-            tip="只能上传音频文件（MP3、WAV等），且不超过10MB，仅支持一个文件，二次上传将直接替换"
-            path-prefix="exam/question"
-            list-type="text"
-            @change="handleNotesAudioChange"
-            @progress="(event, file) => handleUploadProgress('notesAudio', event.percent < 100)"
-            @preview="handleIntroAudioPreview"
-          />
+          <div style="display: flex; align-items: flex-start;">
+            <div style="flex: 1;">
+              <oss-upload
+                v-if="showUpload.notes"
+                ref="notesAudioUpload"
+                v-model="form.introAudioUrl"
+                :limit="1"
+                accept=".mp3,.wav,.ogg,.m4a,.aac"
+                :file-size="10"
+                tip="只能上传音频文件（MP3、WAV等），且不超过10MB，仅支持一个文件，二次上传将直接替换"
+                path-prefix="exam/question"
+                list-type="text"
+                @change="handleNotesAudioChange"
+                @progress="(event, file) => handleUploadProgress('notesAudio', event.percent < 100)"
+                @preview="handleIntroAudioPreview"
+              />
+            </div>
+            <el-button 
+              type="primary" 
+              size="small" 
+              style="margin-left: 10px; margin-top: 5px;" 
+              @click="generateAudio('notes')"
+              :loading="generatingAudio.notes"
+              icon="el-icon-microphone"
+            >
+              生成音频
+            </el-button>
+          </div>
           <div v-if="uploadStatus.notesAudio" style="color: #E6A23C; font-size: 12px; margin-top: 5px;">
             请先等待上传完成
           </div>
@@ -152,6 +167,7 @@
           <div v-if="form.trialListenEnabled === 1">
             <el-form-item label="试听旁白音频" prop="trialIntroAudioUrl">
               <oss-upload
+                v-if="showUpload.trialIntro"
                 ref="trialIntroAudioUpload"
                 v-model="form.trialIntroAudioUrl"
                 :limit="1"
@@ -169,19 +185,34 @@
               </div>
             </el-form-item>
             <el-form-item label="试听音频" prop="trialListenAudioUrl">
-              <oss-upload
-                ref="trialListenAudioUpload"
-                v-model="form.trialListenAudioUrl"
-                :limit="1"
-                accept=".mp3,.wav,.ogg,.m4a,.aac"
-                :file-size="10"
-                tip="只能上传音频文件，且不超过10MB，仅支持一个文件，二次上传将直接替换。此音频需要用户点击'播放试听音频'按钮时播放"
-                path-prefix="exam/question"
-                list-type="text"
-                @change="handleTrialListenAudioChange"
-                @progress="(event, file) => handleUploadProgress('trialListenAudio', event.percent < 100)"
-                @preview="handleTrialListenAudioPreview"
-              />
+              <div style="display: flex; align-items: flex-start;">
+                <div style="flex: 1;">
+                  <oss-upload
+                    v-if="showUpload.trial"
+                    ref="trialListenAudioUpload"
+                    v-model="form.trialListenAudioUrl"
+                    :limit="1"
+                    accept=".mp3,.wav,.ogg,.m4a,.aac"
+                    :file-size="10"
+                    tip="只能上传音频文件，且不超过10MB，仅支持一个文件，二次上传将直接替换。此音频需要用户点击'播放试听音频'按钮时播放"
+                    path-prefix="exam/question"
+                    list-type="text"
+                    @change="handleTrialListenAudioChange"
+                    @progress="(event, file) => handleUploadProgress('trialListenAudio', event.percent < 100)"
+                    @preview="handleTrialListenAudioPreview"
+                  />
+                </div>
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  style="margin-left: 10px; margin-top: 5px;" 
+                  @click="generateAudio('trial')"
+                  :loading="generatingAudio.trial"
+                  icon="el-icon-microphone"
+                >
+                  生成音频
+                </el-button>
+              </div>
               <div v-if="uploadStatus.trialListenAudio" style="color: #E6A23C; font-size: 12px; margin-top: 5px;">
                 请先等待上传完成
               </div>
@@ -301,7 +332,7 @@
         </el-form-item>
 
         <!-- 标签页：试卷结构、中场配置 -->
-        <el-tabs v-model="activeTab" type="border-card" style="margin-top: 20px;">
+        <el-tabs v-model="activeTab" type="border-card" style="margin-top: 20px;" @tab-click="handleTabClick">
           <el-tab-pane label="试卷结构" name="structure">
             <paper-structure-table
               :key="`structure-table-${form.id || 'new'}`"
@@ -319,6 +350,7 @@
               :key="`intermission-${form.id || 'new'}`"
               ref="intermissionManagement"
               :paper-id="form.id"
+              :default-audio-url="defaultIntermissionAudio"
               @preview-audio="handleStructureAudioPreview"
               @refresh="handleIntermissionRefresh"
             />
@@ -435,11 +467,12 @@ import {
   addPaper, updatePaper,
   addPaperVolume, updatePaperVolume, deletePaperVolume,
   addPaperSection, updatePaperSection, deletePaperSection,
-  batchSavePaperQuestion
+  batchSavePaperQuestion, generateTTS
 } from "@/api/exam/paper"
 import { getCategoryTree } from "@/api/exam/questionCategory"
+import { getDicts } from "@/api/system/dict/data"
 import { getToken } from "@/utils/auth"
-import { encodeUrlFileName, normalizeMediaUrl } from "@/utils/media"
+import { encodeUrlFileName, normalizeMediaUrl, getAudioDuration } from "@/utils/media"
 import { getMediaDownloadUrl } from "@/api/exam/question"
 import IntermissionManagement from "./components/IntermissionManagement.vue"
 import PaperStructureTable from "./components/PaperStructureTable.vue"
@@ -449,11 +482,13 @@ import Editor from "@/components/Editor"
 export default {
   name: "PaperAdd",
   components: { IntermissionManagement, PaperStructureTable, OssUpload, Editor },
-  dicts: ['question_type', 'subject', 'question_type_default_score', 'paper_type', 'paper_month', 'paper_province'],
+  dicts: ['question_type', 'subject', 'question_type_default_score', 'paper_type', 'paper_month', 'paper_province', 'sys_exam_default_audio'],
   data() {
       return {
         loading: false,
+        loading: false,
         pollingTimer: null, // 轮询定时器
+        intermissionDictOptions: [], // 手动加载的中场配置字典
       // 年份选项（2000-2050）
       yearOptions: (() => {
         const years = []
@@ -503,6 +538,8 @@ export default {
         remark: undefined,
         autoCalculateTotalScore: false
       },
+      pendingIntermissionGeneration: false, // 是否有待处理的中场自动生成任务
+      pendingVolumes: null, // 待处理的卷别数据（延迟生成用）
       // 表单校验
       rules: {
         customName: [
@@ -547,7 +584,7 @@ export default {
           { required: true, message: "考试时长不能为空", trigger: "blur" }
         ],
         paperDesc: [
-          { required: true, message: "试卷描述不能为空", trigger: "blur" }
+          { required: false, message: "试卷描述不能为空", trigger: "blur" }
         ],
         notes: [
           { required: true, message: "注意事项不能为空", trigger: "blur" }
@@ -611,10 +648,68 @@ export default {
       volumeSliderVisible: false,
       volumeTooltipVisible: false,
       volumeTooltipTimer: null,
+      volumeTooltipTimer: null,
       handleKeydown: null,
+      // TTS 生成状态
+      generatingAudio: {
+        notes: false,
+        trial: false
+      },
+      // 组件显示控制
+      showUpload: {
+        notes: true,
+        trial: true,
+        trialIntro: true
+      }
+    }
+  },
+  watch: {
+    // 监听字典加载，加载完成后填充默认值
+    'dict.type.sys_exam_default_audio': {
+      handler(val) {
+        if (val && val.length > 0) {
+          this.fillDefaultAudioSettings()
+        }
+      },
+      immediate: true
     }
   },
   computed: {
+    // 计算默认中场音频URL
+    // 计算默认中场音频URL (修正：及宽松匹配)
+    defaultIntermissionAudio() {
+      // 使用手动加载的字典数据，不再依赖 mixin
+      const dicts = this.intermissionDictOptions
+      
+      if (dicts && dicts.length > 0) {
+        console.log('[Add] Dicts loaded (manual):', JSON.parse(JSON.stringify(dicts)))
+        
+        const target = 'intermission'
+        // 尝试宽松匹配
+        // 1. Label = intermission (忽略大小写/空格)
+        let item = dicts.find(d => d.dictLabel && d.dictLabel.trim().toLowerCase() === target)
+        if (item) {
+           console.log('[Add] Found default audio (by label fuzzy):', item.dictValue)
+           return item.dictValue
+        }
+        
+        // 2. Value = intermission
+        item = dicts.find(d => d.dictValue && d.dictValue.trim().toLowerCase() === target)
+        if (item) {
+           console.log('[Add] Found default audio (by value fuzzy):', item.dictLabel)
+           return item.dictLabel // 假设 value 是 URL
+        }
+
+        // 3. Label 包含 intermission
+        item = dicts.find(d => d.dictLabel && d.dictLabel.toLowerCase().includes(target))
+        if (item) {
+             console.log('[Add] Found default audio (by label contains):', item.dictValue)
+             return item.dictValue
+        }
+      }
+      console.warn('[Add] Default audio "intermission" NOT FOUND in dicts')
+      return null
+    },
     /** 计算属性：当前计算出的总分（从试卷结构组件获取） */
     calculatedTotalScore() {
       // 新增页面中，总分由试卷结构组件计算
@@ -638,6 +733,21 @@ export default {
   created() {
     // 新增页面不需要加载数据，只需要加载题目分类树（用于试卷结构中的题目选择）
     this.loadQuestionSelectCategoryTree()
+
+    // 手动加载中场配置字典（绕过 Mixin 可能的延迟延迟或加载失败）
+    getDicts('sys_exam_default_audio').then(res => {
+      // console.log('[Add] Manual Dict Load Success:', res.data)
+      this.intermissionDictOptions = res.data
+    })
+
+    // 默认启用时间：当前时间
+    const now = new Date()
+    this.form.enableStartTime = this.parseTime(now)
+
+    // 默认结束时间：6个月后
+    const sixMonthsLater = new Date(now)
+    sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6)
+    this.form.enableEndTime = this.parseTime(sixMonthsLater)
   },
   mounted() {
     // 默认选中第一个试卷类型（在mounted中执行，确保字典数据已加载）
@@ -665,6 +775,121 @@ export default {
       }
     }
     document.addEventListener('keydown', this.handleKeydown)
+
+    // 检查是否有导入数据
+    if (this.$route.query.fromImport) {
+      try {
+        const importedDataStr = sessionStorage.getItem('importedQuestions')
+        if (importedDataStr) {
+          const importedData = JSON.parse(importedDataStr)
+          console.log('加载导入数据:', importedData)
+          
+          // 填充基本信息
+          if (importedData.paperName) {
+            this.form.customName = importedData.paperName
+          }
+          if (importedData.categoryId) {
+             // 如果有分类ID，可以在这里设置，但这需要表单支持该字段（add.vue似乎没有显式分类选择，而是依赖外部或默认）
+          }
+
+          // 填充试卷结构: 兼容直接传递volumes或包含在paperStructure中的情况
+          const volumes = importedData.volumes || (importedData.paperStructure && importedData.paperStructure.volumes)
+          
+          if (volumes && this.$refs.paperStructureTable) {
+            // 自动解析分值逻辑：遍历所有卷别和大题，从标题中提取“每小题x分”
+            try {
+              const applyScoreToQuestions = (questions, score) => {
+                if (questions && questions.length > 0) {
+                  questions.forEach(q => {
+                    q.score = score
+                  })
+                }
+              }
+
+              volumes.forEach(vol => {
+                if (vol.sections && vol.sections.length > 0) {
+                  vol.sections.forEach(sec => {
+                    // 兼容多种字段名
+                    const title = sec.sectionName || sec.name || sec.title || ''
+                    // 正则匹配：每小题1.5分 或 每题1分，允许空格
+                    // 优先使用后端解析的分值(如果有效)，否则尝试前端正则
+                    let score = sec.score_per_question || sec.scorePerQuestion
+                    
+                    if (!score) {
+                      const match = title.match(/每(?:小)?题\s*(\d+(?:\.\d+)?)\s*分/)
+                      if (match && match[1]) {
+                        score = parseFloat(match[1])
+                      }
+                    }
+
+                    if (score && !isNaN(score)) {
+                      score = parseFloat(score)
+                      console.log(`自动提取分值: ${title} -> ${score}分`)
+                      // 设置大题默认分值
+                      sec.scorePerQuestion = score
+                        
+                        // 1. 处理直接下属的题目
+                        applyScoreToQuestions(sec.questions, score)
+
+                        // 2. 处理题目组中的题目 (兼容 questionGroups 和 question_groups)
+                        const groups = sec.questionGroups || sec.question_groups
+                        if (groups && groups.length > 0) {
+                          groups.forEach(group => {
+                            applyScoreToQuestions(group.questions, score)
+                          })
+                        }
+                      }
+                    })
+                  }
+                })
+            } catch (e) {
+              console.error('自动解析分值出错:', e)
+            }
+
+             this.$nextTick(() => {
+                // 调试日志：检查音频字段
+                console.log('[add.vue] 准备调用 initStructure，检查音频字段:')
+                volumes.forEach((vol, vIdx) => {
+                  console.log(`  卷别[${vIdx}] ${vol.name || vol.volumeName}:`, {
+                    volume_audio_url: vol.volume_audio_url,
+                    volumeAudioUrl: vol.volumeAudioUrl
+                  })
+                  const sections = vol.sections || []
+                  sections.forEach((sec, sIdx) => {
+                    console.log(`    大题[${sIdx}] ${sec.name || sec.sectionName}:`, {
+                      intro_audio_url: sec.intro_audio_url,
+                      introAudioUrl: sec.introAudioUrl,
+                      intro_audio_duration: sec.intro_audio_duration,
+                      introAudioDuration: sec.introAudioDuration
+                    })
+                  })
+                })
+                
+                this.$refs.paperStructureTable.initStructure(volumes)
+                
+                // 自动配置默认中场（音频和跳转逻辑）
+                // 如果中场配置组件已挂载（Tab显示中），直接生成
+                if (this.$refs.intermissionManagement) {
+                  this.$refs.intermissionManagement.generateDefaults(volumes, this.defaultIntermissionAudio)
+                } else {
+                  // 如果未挂载（Tab未点击过），标记为待生成，等待点击Tab时触发
+                  this.pendingIntermissionGeneration = true
+                  // 保存volumes数据，避免后续通过ref获取为空的问题
+                  this.pendingVolumes = volumes
+                }
+                
+                this.$message.success('已自动加载导入的试卷结构')
+             })
+          }
+          
+          // 清除sessionStorage，避免重复加载？暂时保留以便调试或刷新
+          // sessionStorage.removeItem('importedQuestions') 
+        }
+      } catch (e) {
+        console.error('解析导入数据失败:', e)
+        this.$message.error('无法加载导入数据')
+      }
+    }
   },
   beforeDestroy() {
     if (this.handleKeydown) {
@@ -673,10 +898,33 @@ export default {
     document.removeEventListener('click', this.handleClickOutsideVolumeSlider, true)
   },
   methods: {
-    /**
-     * 处理开始时间变化
-     * 如果结束时间小于开始时间，清空结束时间
-     */
+    /** 处理Tab点击 */
+    handleTabClick(tab) {
+      if (tab.name === 'intermission' && this.pendingIntermissionGeneration) {
+        // 如果有待处理的自动生成任务，则执行
+        this.$nextTick(() => {
+          if (this.$refs.intermissionManagement) {
+             // 优先使用 pendingVolumes，如果为空也尝试从结构组件获取
+             let volumes = this.pendingVolumes || []
+             if ((!volumes || volumes.length === 0) && this.$refs.paperStructureTable) {
+                const structureData = this.$refs.paperStructureTable.getStructureData()
+                volumes = structureData.volumes || []
+             }
+             
+             console.log('[add.vue] 触发延迟生成中场配置', { 
+               volumesCount: volumes.length, 
+               defaultAudio: this.defaultIntermissionAudio 
+             })
+             
+             this.$refs.intermissionManagement.generateDefaults(volumes, this.defaultIntermissionAudio)
+             
+             // 重置标志和数据
+             this.pendingIntermissionGeneration = false 
+             this.pendingVolumes = null
+          }
+        })
+      }
+    },
     handleStartTimeChange(value) {
       if (value && this.form.enableEndTime) {
         const startTime = new Date(value).getTime()
@@ -696,7 +944,13 @@ export default {
     async resolveMediaPreviewUrl(rawUrl) {
       if (!rawUrl) return ''
       try {
-        const response = await getMediaDownloadUrl({ url: rawUrl })
+        // 清除URL中的签名参数（阿里云OSS签名参数），避免重复签名
+        let cleanUrl = rawUrl
+        if (rawUrl.includes('?') && (rawUrl.includes('Expires=') || rawUrl.includes('Signature='))) {
+          cleanUrl = rawUrl.split('?')[0]
+          console.log('[resolveMediaPreviewUrl] 清除签名参数后的URL:', cleanUrl)
+        }
+        const response = await getMediaDownloadUrl({ url: cleanUrl })
         const signedUrl = response?.downloadUrl || response?.data?.downloadUrl
         if (response?.code === 200 && signedUrl) {
           return signedUrl
@@ -745,6 +999,163 @@ export default {
       const fileName = file?.name || this.getFileNameFromUrl(rawUrl) || '音频预览'
       this.playAudioPreview(previewUrl, fileName)
     },
+    /** 填充默认音频配置（异步获取音频时长） */
+    async fillDefaultAudioSettings() {
+      // 仅在新增模式（ID为空）或字段为空时填充
+      const defaults = this.dict.type.sys_exam_default_audio
+      console.log('加载默认音频字典:', defaults)
+      if (!defaults) return
+ 
+      const getVal = (key) => {
+        const item = defaults.find(d => d.label === key) // Try matching label
+        return item ? item.value : null
+      }
+
+      // 需要获取时长的音频列表
+      const audioList = []
+
+      // 注意事项
+      if (!this.form.notes) {
+        const text = getVal('attention_text')
+        if (text) this.form.notes = text
+      }
+      if (!this.form.introAudioUrl) {
+        const url = getVal('attention_audio') || getVal('attention')
+        if (url) {
+          this.form.introAudioUrl = url
+          this.form.introAudioPath = url // path 和 url 相同
+          audioList.push({ key: 'introAudioDuration', url: url })
+          // 强制重置
+          this.showUpload.notes = false
+          setTimeout(() => { this.showUpload.notes = true }, 50)
+        }
+      }
+
+      // 试听
+      if (!this.form.trialListenAudioText) {
+        const text = getVal('trial_text')
+        if (text) this.form.trialListenAudioText = text
+      }
+      if (!this.form.trialListenAudioUrl) {
+        const url = getVal('trial_audio') || getVal('trial')
+        if (url) {
+          this.form.trialListenAudioUrl = url
+          this.form.trialListenAudioPath = url // path 和 url 相同
+          audioList.push({ key: 'trialListenAudioDuration', url: url })
+          // 强制重置
+          this.showUpload.trial = false
+          setTimeout(() => { this.showUpload.trial = true }, 50)
+        }
+      }
+       if (!this.form.trialIntroAudioUrl) {
+        // Fallback to trial_audio or trial if trial_intro_audio is not set, as they are often the same
+        const url = getVal('trial_intro_audio') || getVal('trial_audio') || getVal('trial')
+        if (url) {
+          this.form.trialIntroAudioUrl = url
+          this.form.trialIntroAudioPath = url // path 和 url 相同
+          audioList.push({ key: 'trialIntroAudioDuration', url: url })
+          // 强制重置
+          this.showUpload.trialIntro = false
+          this.showUpload.trialIntro = false
+          setTimeout(() => { this.showUpload.trialIntro = true }, 50)
+        }
+      }
+
+      // 操作提示文本
+      if (!this.form.operateListenText) {
+        const text = getVal('operate_text')
+        if (text) this.form.operateListenText = text
+      }
+
+      // 操作提示图片
+      if (!this.form.operateListenImageUrl) {
+        const url = getVal('operate_listen_image_url')
+        if (url) {
+          this.form.operateListenImageUrl = url
+          // 同时也设置 path，如果后端需要
+          const path = getVal('operate_listen_image_path')
+          if (path) this.form.operateListenImagePath = path
+          else this.form.operateListenImagePath = 'exam/operate_listen_image/' + this.getFileNameFromUrl(url)
+        }
+      }
+
+      // 异步获取所有音频时长
+      if (audioList.length > 0) {
+        console.log('[fillDefaultAudioSettings] 开始获取音频时长:', audioList.map(a => a.key))
+        for (const audio of audioList) {
+          const duration = await getAudioDuration(audio.url)
+          if (duration) {
+            this.form[audio.key] = duration
+            console.log(`[fillDefaultAudioSettings] ${audio.key} = ${duration}秒`)
+          }
+        }
+      }
+    },
+
+    /** 生成音频 */
+    async generateAudio(type) {
+      let text = ''
+      if (type === 'notes') {
+        text = this.form.notes
+      } else if (type === 'trial') {
+        text = this.form.trialListenAudioText
+      }
+
+      // 优化富文本清洗逻辑：保留换行
+      let plainText = text || ''
+      // 将块级元素结束标签和 br 替换为换行符
+      plainText = plainText.replace(/<(?:br|\/p|\/div|li)[\s\/]*>/gi, '\n')
+      // 去除所有 HTML 标签
+      plainText = plainText.replace(/<[^>]+>/g, '')
+      // 处理常见实体
+      plainText = plainText.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      // 去除多余空行
+      plainText = plainText.replace(/\n\s*\n/g, '\n').trim()
+
+      if (!plainText) {
+        this.$modal.msgWarning('请先输入文本内容')
+        return
+      }
+
+      this.generatingAudio[type] = true
+      try {
+        const res = await generateTTS({
+          text: plainText,
+          voice: 'xiaoyun' // 默认发音人
+        })
+        
+        const ossUrl = res.data && res.data.oss_url ? res.data.oss_url : res.oss_url
+        const duration = res.data && res.data.duration ? res.data.duration : res.duration
+        
+        if (ossUrl) {
+          if (type === 'notes') {
+            this.form.introAudioUrl = ossUrl
+            this.form.introAudioDuration = duration
+            this.$message.success('生成注意事项音频成功')
+            // 强制重置
+            this.showUpload.notes = false
+            this.$nextTick(() => {
+              this.showUpload.notes = true
+            })
+          } else if (type === 'trial') {
+            this.form.trialListenAudioUrl = ossUrl
+            this.form.trialListenAudioDuration = duration
+             this.$message.success('生成试听音频成功')
+             // 强制重置组件
+             this.showUpload.trial = false
+             this.$nextTick(() => {
+               this.showUpload.trial = true
+             })
+          }
+        }
+      } catch (e) {
+        console.error('生成音频失败', e)
+        // this.$modal.msgError('生成失败') // request拦截器通常会显示错误
+      } finally {
+        this.generatingAudio[type] = false
+      }
+    },
+
     /** 提交按钮 */
     async submitForm() {
       // 检查是否有正在上传的文件
@@ -758,6 +1169,8 @@ export default {
         this.form.operateListenImage = this.form.operateListenImageUrl
       }
 
+
+
       this.$refs["form"].validate(async valid => {
         if (valid) {
           try {
@@ -766,8 +1179,10 @@ export default {
               ...this.form,
               // 确保 customName 正确传递（如果为空字符串，转换为 null）
               customName: this.form.customName && this.form.customName.trim() ? this.form.customName.trim() : null,
-              // 确保 introAudioDuration 正确传递（如果是 undefined，转换为 null，以便后端能正确更新）
-              introAudioDuration: this.form.introAudioDuration !== undefined ? this.form.introAudioDuration : null
+              // 确保所有音频时长字段正确传递（如果是 undefined，转换为 null，以便后端能正确更新）
+              introAudioDuration: this.form.introAudioDuration !== undefined ? this.form.introAudioDuration : null,
+              trialListenAudioDuration: this.form.trialListenAudioDuration !== undefined ? this.form.trialListenAudioDuration : null,
+              trialIntroAudioDuration: this.form.trialIntroAudioDuration !== undefined ? this.form.trialIntroAudioDuration : null
             }
 
             // 2. 获取试卷结构数据（卷别、大题、题目）- 嵌套结构
@@ -791,7 +1206,7 @@ export default {
                 ...paperData,
                 totalQuestions: totalQuestions > 0 ? totalQuestions : paperData.totalQuestions
               },
-              volumes: volumes, // 嵌套结构：volumes -> sections -> questions
+              volumes: this.cleanStructureData(volumes), // 嵌套结构：volumes -> sections -> questions
               intermissions: intermissions
             }
 
@@ -850,6 +1265,67 @@ export default {
         }
       })
     },
+    /** 
+     * 清理结构数据中临时的前端ID（以temp_开头）
+     * 避免后端反序列化 Integer 失败
+     */
+    cleanStructureData(volumes) {
+      if (!volumes || !Array.isArray(volumes)) return []
+      return JSON.parse(JSON.stringify(volumes)).map(vol => {
+        // 清理卷别ID
+        if (typeof vol.id === 'string' && vol.id.startsWith('temp_')) {
+          vol.id = null
+        }
+        
+        if (vol.sections) {
+          vol.sections.forEach(sec => {
+            // 清理大题ID
+            if (typeof sec.id === 'string' && sec.id.startsWith('temp_')) {
+              sec.id = null
+            }
+            // 清理大题关联的卷别ID
+            if (typeof sec.volumeId === 'string' && sec.volumeId.startsWith('temp_')) {
+              sec.volumeId = null
+            }
+
+            // 处理题目组
+            const groups = sec.questionGroups || sec.question_groups
+            if (groups) {
+              groups.forEach(group => {
+                // 清理题目组ID
+                if (typeof group.id === 'string' && group.id.startsWith('temp_')) {
+                  group.id = null
+                }
+                // ★ 关键修复：清理题目组关联的大题ID (Integer类型不接受字符串)
+                if (typeof group.sectionId === 'string' && group.sectionId.startsWith('temp_')) {
+                  group.sectionId = null
+                }
+                if (group.questions) {
+                  group.questions.forEach(q => {
+                     // 题目ID通常是题库ID，不应清理，除非是从未保存的新增题目（暂不涉及题目新增ID问题）
+                     // 但要清理关联ID
+                     if (typeof q.sectionId === 'string' && q.sectionId.startsWith('temp_')) {
+                       q.sectionId = null
+                     }
+                  })
+                }
+              })
+            }
+
+            // 处理直接题目
+            if (sec.questions) {
+               sec.questions.forEach(q => {
+                 if (typeof q.sectionId === 'string' && q.sectionId.startsWith('temp_')) {
+                   q.sectionId = null
+                 }
+               })
+            }
+          })
+        }
+        return vol
+      })
+    },
+
     /** 取消按钮 */
     handleCancel() {
       // 清除轮询定时器

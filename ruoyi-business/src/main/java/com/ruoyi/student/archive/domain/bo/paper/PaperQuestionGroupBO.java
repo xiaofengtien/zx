@@ -81,4 +81,14 @@ public class PaperQuestionGroupBO implements Serializable {
      * 选中的题目ID列表（前端传入为数组，后端存储为JSON字符串）
      */
     private java.util.List<Integer> selectedQuestionIds;
+
+    /**
+     * 题目组名称
+     */
+    private String groupName;
+
+    /**
+     * 组答题时间
+     */
+    private Integer answerTime;
 }

@@ -126,7 +126,7 @@ public class QiniuOssService implements IOssService {
             policy.put("fsizeLimit", 20L * 1024 * 1024); // 20MB
             policy.put("insertOnly", 0); // 允许覆盖已存在的文件
             String upToken = auth.uploadToken(qiniuOssConfig.getBucketName(), null, 3600, policy);
-            
+
             String finalContentType = StringUtils.isNotEmpty(contentType)
                     ? contentType
                     : determineContentType(objectKey, null);
@@ -167,7 +167,7 @@ public class QiniuOssService implements IOssService {
             policy.put("fsizeLimit", 20L * 1024 * 1024); // 20MB
             policy.put("insertOnly", 0); // 允许覆盖已存在的文件
             String upToken = auth.uploadToken(qiniuOssConfig.getBucketName(), null, 3600, policy);
-            
+
             String finalContentType = StringUtils.isNotEmpty(contentType)
                     ? contentType
                     : determineContentType(objectKey, null);
@@ -270,7 +270,7 @@ public class QiniuOssService implements IOssService {
             // 获取域名（用于构建下载URL）
             String domain = qiniuOssConfig.getUrlPrefix();
             boolean useHttps = false;
-            
+
             if (StringUtils.isEmpty(domain)) {
                 domain = qiniuOssConfig.getDomain();
                 if (StringUtils.isEmpty(domain)) {
@@ -296,7 +296,7 @@ public class QiniuOssService implements IOssService {
             // DownloadUrl类会自动处理URL编码和签名，正确处理中文文件名
             long expirationSeconds = 3600; // 1小时有效期
             long deadline = System.currentTimeMillis() / 1000 + expirationSeconds;
-            
+
             // 创建DownloadUrl对象（使用对象键，不是完整URL）
             // 第二个参数：useHttps - 是否使用HTTPS协议
             DownloadUrl downloadUrl = new DownloadUrl(domain, useHttps, key);
@@ -345,7 +345,7 @@ public class QiniuOssService implements IOssService {
             // 获取域名
             String domain = qiniuOssConfig.getUrlPrefix();
             boolean useHttps = false;
-            
+
             if (StringUtils.isEmpty(domain)) {
                 domain = qiniuOssConfig.getDomain();
                 if (StringUtils.isEmpty(domain)) {
@@ -385,11 +385,22 @@ public class QiniuOssService implements IOssService {
                 javax.net.ssl.HttpsURLConnection httpsConnection = (javax.net.ssl.HttpsURLConnection) connection;
                 javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
                 sslContext.init(null, new javax.net.ssl.TrustManager[] {
-                    new javax.net.ssl.X509TrustManager() {
-                        @Override public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
-                        @Override public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
-                        @Override public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[] {}; }
-                    }
+                        new javax.net.ssl.X509TrustManager() {
+                            @Override
+                            public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
+                                    String authType) {
+                            }
+
+                            @Override
+                            public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
+                                    String authType) {
+                            }
+
+                            @Override
+                            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                                return new java.security.cert.X509Certificate[] {};
+                            }
+                        }
                 }, new java.security.SecureRandom());
                 httpsConnection.setSSLSocketFactory(sslContext.getSocketFactory());
                 httpsConnection.setHostnameVerifier((hostname, session) -> true);
@@ -448,9 +459,9 @@ public class QiniuOssService implements IOssService {
     }
 
     @Override
-    public String uploadMultipart(InputStream inputStream, String objectKey, String contentType, 
-                                 long fileSize, Long chunkSize, 
-                                 java.util.function.BiConsumer<Long, Long> progressCallback) {
+    public String uploadMultipart(InputStream inputStream, String objectKey, String contentType,
+            long fileSize, Long chunkSize,
+            java.util.function.BiConsumer<Long, Long> progressCallback) {
         if (inputStream == null) {
             throw new ServiceException("文件流不能为空");
         }
@@ -472,16 +483,16 @@ public class QiniuOssService implements IOssService {
                     log.warn("删除旧文件失败，继续上传: {}, 错误: {}", objectKey, e.getMessage());
                 }
             }
-            
+
             // 生成上传凭证（根据文件类型设置不同的大小限制）
             com.qiniu.util.StringMap policy = new com.qiniu.util.StringMap();
             // ZIP包（试卷包）：最大 500MB，其他文件（媒体文件）：最大 20MB
-            long fsizeLimit = objectKey.startsWith("paper_packages/") 
-                ? 500L * 1024 * 1024  // 500MB for ZIP packages
-                : 20L * 1024 * 1024;  // 20MB for media files (前端限制10MB)
+            long fsizeLimit = objectKey.startsWith("paper_packages/")
+                    ? 500L * 1024 * 1024 // 500MB for ZIP packages
+                    : 20L * 1024 * 1024; // 20MB for media files (前端限制10MB)
             policy.put("fsizeLimit", fsizeLimit);
             String upToken = auth.uploadToken(qiniuOssConfig.getBucketName(), null, 3600, policy);
-            
+
             String finalContentType = StringUtils.isNotEmpty(contentType)
                     ? contentType
                     : determineContentType(objectKey, null);
@@ -502,7 +513,7 @@ public class QiniuOssService implements IOssService {
                     chunkSizeBytes = 100L * 1024 * 1024; // 500MB以上用100MB分片
                 }
             }
-            
+
             // 如果文件大小小于等于50MB，使用普通上传（更快）
             if (fileSize <= 50L * 1024 * 1024) {
                 log.info("文件大小 {} MB，使用普通上传", fileSize / 1024.0 / 1024.0);
@@ -516,7 +527,7 @@ public class QiniuOssService implements IOssService {
             }
 
             // 大文件使用分片上传
-            log.info("文件大小 {} MB，使用分片上传，分片大小: {} MB", 
+            log.info("文件大小 {} MB，使用分片上传，分片大小: {} MB",
                     fileSize / 1024.0 / 1024.0, chunkSizeBytes / 1024.0 / 1024.0);
 
             // 七牛云的UploadManager会自动处理大文件的分片上传
@@ -533,8 +544,8 @@ public class QiniuOssService implements IOssService {
                         bytesRead += n;
                         // 每上传1MB或每5秒报告一次进度
                         long currentTime = System.currentTimeMillis();
-                        if (progressCallback != null && 
-                            (bytesRead % (1024 * 1024) == 0 || currentTime - lastReportTime > 5000)) {
+                        if (progressCallback != null &&
+                                (bytesRead % (1024 * 1024) == 0 || currentTime - lastReportTime > 5000)) {
                             progressCallback.accept(bytesRead, fileSize);
                             lastReportTime = currentTime;
                         }
@@ -555,7 +566,7 @@ public class QiniuOssService implements IOssService {
             }
 
             String fileUrl = buildFileUrl(objectKey);
-            log.info("七牛云OSS分片上传成功: {} -> {}, 文件大小: {} MB", 
+            log.info("七牛云OSS分片上传成功: {} -> {}, 文件大小: {} MB",
                     objectKey, fileUrl, fileSize / 1024.0 / 1024.0);
 
             return fileUrl;
@@ -570,16 +581,16 @@ public class QiniuOssService implements IOssService {
     }
 
     @Override
-    public UploadResult uploadMultipartWithResume(InputStream inputStream, String objectKey, String contentType, 
-                                                  long fileSize, Long chunkSize, 
-                                                  String uploadId, java.util.List<PartInfo> uploadedParts,
-                                                  java.util.function.BiConsumer<Long, Long> progressCallback) {
+    public UploadResult uploadMultipartWithResume(InputStream inputStream, String objectKey, String contentType,
+            long fileSize, Long chunkSize,
+            String uploadId, java.util.List<PartInfo> uploadedParts,
+            java.util.function.BiConsumer<Long, Long> progressCallback) {
         // 七牛云的分片上传由UploadManager自动处理，不支持手动管理uploadId
         // 如果提供了uploadId，说明是续传，但七牛云SDK不支持，需要重新上传
         if (uploadId != null && !uploadId.isEmpty()) {
             log.warn("七牛云OSS不支持手动管理uploadId，将重新上传。objectKey: {}", objectKey);
         }
-        
+
         // 使用普通分片上传方法（七牛云SDK会自动处理）
         String fileUrl = uploadMultipart(inputStream, objectKey, contentType, fileSize, chunkSize, progressCallback);
         return new UploadResult(fileUrl, null, null);
@@ -784,11 +795,11 @@ public class QiniuOssService implements IOssService {
 
         try {
             String key = extractObjectKey(objectKey);
-            
+
             // 获取域名（用于构建下载URL）
             String domain = qiniuOssConfig.getUrlPrefix();
             boolean useHttps = false;
-            
+
             if (StringUtils.isEmpty(domain)) {
                 domain = qiniuOssConfig.getDomain();
                 if (StringUtils.isEmpty(domain)) {
@@ -807,7 +818,7 @@ public class QiniuOssService implements IOssService {
                     domain = domain.substring(0, domain.length() - 1);
                 }
             }
-            
+
             // 使用DownloadUrl类生成私有下载链接（支持中文文件名）
             // DownloadUrl类会自动处理URL编码和签名，正确处理中文文件名
             long deadline = System.currentTimeMillis() / 1000 + expirationSeconds;
@@ -1029,18 +1040,13 @@ public class QiniuOssService implements IOssService {
     }
 
     /**
-     * 获取七牛云上传地址（根据配置的区域）
+     * 获取七牛云上传地址（东南亚区域）
      * 
      * @return 上传地址
      */
     public String getUploadUrl() {
-        // 根据配置的区域返回对应的上传地址
-        // region1 (华北-河北) -> up-z1.qiniup.com
-        // region0 (华东) -> up-z0.qiniup.com
-        // region2 (华南) -> up-z2.qiniup.com
-        // regionNa0 (北美) -> up-na0.qiniup.com
-        // regionAs0 (东南亚) -> up-as0.qiniup.com
-        // 默认使用 region1 (华北)
-        return "https://up-z1.qiniup.com";
+        // 使用 HTTP 上传地址（避免 SSL 问题）
+        // z0=华东, z1=华北, z2=华南, na0=北美, as0=东南亚
+        return "http://up-as0.qiniup.com";
     }
 }

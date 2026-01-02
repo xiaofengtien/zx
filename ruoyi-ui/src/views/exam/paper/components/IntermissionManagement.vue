@@ -116,6 +116,7 @@ import { getPaperVolumeList } from "@/api/exam/paper"
 import { getQuestionMediaByIntermissionId } from "@/api/exam/paper"
 import { saveQuestionMedia, removeQuestionMedia } from "@/api/exam/question"
 import { getToken } from "@/utils/auth"
+import { getAudioDuration } from "@/utils/media"
 import OssUpload from "@/components/OssUpload"
 
 export default {
@@ -125,6 +126,10 @@ export default {
     paperId: {
       type: Number,
       default: undefined
+    },
+    defaultAudioUrl: {
+      type: String,
+      default: null
     }
   },
   computed: {
@@ -192,14 +197,8 @@ export default {
         toVolumeId: [
           {
             validator: (rule, value, callback) => {
-              // 检查真实ID或临时ID是否至少有一个有值
-              const hasRealId = this.intermissionForm.toVolumeId !== null && this.intermissionForm.toVolumeId !== undefined
-              const hasTempId = this.intermissionForm.toVolumeTempId !== null && this.intermissionForm.toVolumeTempId !== undefined && this.intermissionForm.toVolumeTempId !== ''
-              if (!hasRealId && !hasTempId) {
-                callback(new Error("到卷别不能为空"))
-              } else {
-                callback()
-              }
+              // 到卷别改为允许为空，表示结束
+              callback()
             },
             trigger: "change"
           }
@@ -239,18 +238,21 @@ export default {
         }
         // 新增模式（paperId 为 undefined）时，不加载数据，使用本地数据管理
       }
+    },
+    // 监听默认音频URL变化（处理字典异步加载延迟）
+    defaultAudioUrl: {
+      handler(newVal) {
+        if (newVal && this.volumeList && this.volumeList.length > 0) {
+          console.log('[Intermission] Default audio loaded late, re-generating defaults:', newVal)
+          this.generateDefaults(this.volumeList, newVal)
+        }
+      },
+      immediate: true
     }
   },
   methods: {
     /** 卷别下拉框显示/隐藏时触发（使用 visible-change 替代 focus，避免重复触发） */
     handleVolumeSelectVisible(visible) {
-      console.log('[IntermissionManagement] handleVolumeSelectVisible 触发', {
-        visible: visible,
-        paperId: this.paperId,
-        volumeListLength: this.volumeList.length,
-        loadingVolumeList: this.loadingVolumeList
-      })
-
       // 只在打开下拉框时加载（visible === true）
       if (!visible) {
         return
@@ -259,94 +261,57 @@ export default {
       // 完全从试卷结构组件获取，不调用后端接口
       if (!this.loadingVolumeList) {
           this.loadVolumeListFromStructure()
-      } else {
-        console.log('[IntermissionManagement] 正在加载中，跳过刷新')
       }
     },
     /** 从试卷结构组件获取卷别列表（完全从页面获取，不调用后端） */
+    /** 从试卷结构组件获取卷别列表（完全从页面获取，不调用后端） */
     loadVolumeListFromStructure() {
-      console.log('[IntermissionManagement] loadVolumeListFromStructure 开始')
-
-      // 尝试多种方式获取试卷结构组件
       let paperStructureTable = null
-
-      // 方式1: 通过 $parent.$parent.$parent 获取（因为 IntermissionManagement 在 el-tab-pane 下，el-tab-pane 在 el-tabs 下，el-tabs 在父组件下）
-      // IntermissionManagement -> el-tab-pane -> el-tabs -> add.vue/edit.vue
-      if (this.$parent && this.$parent.$parent && this.$parent.$parent.$parent && this.$parent.$parent.$parent.$refs) {
-        paperStructureTable = this.$parent.$parent.$parent.$refs.paperStructureTable
-        console.log('[IntermissionManagement] 通过 $parent.$parent.$parent 获取:', {
-          exists: !!paperStructureTable,
-          hasRefs: !!this.$parent.$parent.$parent.$refs,
-          refsKeys: this.$parent.$parent.$parent.$refs ? Object.keys(this.$parent.$parent.$parent.$refs) : []
-        })
-      }
-
-      // 方式2: 如果方式1失败，尝试通过 $parent.$parent（el-tabs 层级）
-      if (!paperStructureTable && this.$parent && this.$parent.$parent && this.$parent.$parent.$refs) {
-        paperStructureTable = this.$parent.$parent.$refs.paperStructureTable
-        console.log('[IntermissionManagement] 通过 $parent.$parent 获取:', {
-          exists: !!paperStructureTable,
-          hasRefs: !!this.$parent.$parent.$refs,
-          refsKeys: this.$parent.$parent.$refs ? Object.keys(this.$parent.$parent.$refs) : []
-        })
-      }
-
-      // 方式3: 通过 $root 查找（如果组件在同一个根下）
-      if (!paperStructureTable && this.$root && this.$root.$refs) {
-        paperStructureTable = this.$root.$refs.paperStructureTable
-        console.log('[IntermissionManagement] 通过 $root 获取:', {
-          exists: !!paperStructureTable,
-          refsKeys: Object.keys(this.$root.$refs)
-        })
-      }
-
-      // 方式4: 通过 $parent 向上查找所有层级
-      if (!paperStructureTable) {
-        let current = this.$parent
-        let level = 0
-        while (current && level < 10) {
-          if (current.$refs && current.$refs.paperStructureTable) {
-            paperStructureTable = current.$refs.paperStructureTable
-            console.log('[IntermissionManagement] 通过向上查找第', level, '层获取:', {
-              exists: !!paperStructureTable,
-              componentName: current.$options.name || current.$options._componentTag || 'Unknown'
-            })
-            break
-          }
-          current = current.$parent
-          level++
+      let current = this.$parent
+      let level = 0
+      
+      // 向上查找持有 paperStructureTable 引用的父组件
+      while (current && level < 10) {
+        if (current.$refs && current.$refs.paperStructureTable) {
+          paperStructureTable = current.$refs.paperStructureTable
+          break
         }
+        current = current.$parent
+        level++
       }
 
-      console.log('[IntermissionManagement] paperStructureTable 最终结果:', {
-        exists: !!paperStructureTable,
-        volumeList: paperStructureTable ? paperStructureTable.volumeList : null,
-        volumeListLength: paperStructureTable && paperStructureTable.volumeList ? paperStructureTable.volumeList.length : 0,
-        volumeListType: paperStructureTable && paperStructureTable.volumeList ? typeof paperStructureTable.volumeList : 'N/A',
-        isArray: paperStructureTable && paperStructureTable.volumeList ? Array.isArray(paperStructureTable.volumeList) : false
+      console.log('[Intermission] Loading volumes from structure:', { 
+        found: !!paperStructureTable, 
+        volumes: paperStructureTable ? paperStructureTable.volumeList : 'N/A' 
       })
 
       if (paperStructureTable && paperStructureTable.volumeList && Array.isArray(paperStructureTable.volumeList)) {
-        // 转换为卷别选择器需要的格式，包含 id 或 tempId
         const rawVolumes = paperStructureTable.volumeList
-        console.log('[IntermissionManagement] 原始卷别列表:', rawVolumes.map(v => ({
-          id: v.id,
-          idType: typeof v.id,
-          idString: String(v.id),
-          isTemp: v.id && String(v.id).startsWith('temp_'),
-          volumeName: v.volumeName,
-          volumeCode: v.volumeCode,
-          volumeOrder: v.volumeOrder
-        })))
 
-        this.volumeList = rawVolumes.map(volume => {
-          const volumeId = volume.id
-          // 判断是否为临时ID：如果 id 是字符串且以 temp_ 开头
-          const isTempId = volumeId && String(volumeId).startsWith('temp_')
+        this.volumeList = rawVolumes.map((volume, index) => {
+          // Robust ID extraction:
+          // 1. Try volume.id
+          // 2. Try volume.tempId
+          // 3. Fallback to constructed temp ID using timestamp and index
+          let finalId = volume.id
+          let finalTempId = volume.tempId
+
+          if (!finalId && !finalTempId) {
+             // If completely missing ID, check if it's new volume in add page
+             finalTempId = `temp_auto_${index}_${Date.now()}`
+             // We won't modify the original volume object here to avoid side effects, 
+             // but Intermission needs a key. 
+             // Ideally PaperStructureTable should have IDs.
+          }
+
+          const isTempId = (finalTempId || (finalId && String(finalId).startsWith('temp_')))
+          
           return {
-            id: isTempId ? undefined : volumeId, // 如果是临时ID，id 设为 undefined
-            tempId: isTempId ? volumeId : undefined, // 如果是临时ID，tempId 设为 volumeId
-          volumeCode: volume.volumeCode || volume.volumeName,
+            id: isTempId ? undefined : finalId, 
+            tempId: isTempId ? (finalTempId || finalId) : undefined,
+            // Fallback ID for internal use if both are empty (rare, but prevents empty dropdown)
+            // Note: UI logic mainly uses id or tempId. 
+            volumeCode: volume.volumeCode || volume.volumeName,
             volumeName: volume.volumeName,
             volumeOrder: volume.volumeOrder
           }
@@ -355,49 +320,12 @@ export default {
           const orderB = b.volumeOrder || 0
           return orderA - orderB
         })
-
-        console.log('[IntermissionManagement] 转换后的卷别列表:', this.volumeList.map(v => ({
-          id: v.id,
-          tempId: v.tempId,
-          volumeName: v.volumeName,
-          value: v.id || v.tempId
-        })))
       } else {
-        console.warn('[IntermissionManagement] 无法获取试卷结构组件的卷别列表', {
-          paperStructureTable: !!paperStructureTable,
-          hasVolumeList: paperStructureTable && !!paperStructureTable.volumeList,
-          isArray: paperStructureTable && paperStructureTable.volumeList ? Array.isArray(paperStructureTable.volumeList) : false,
-          parentChain: this.getParentChain()
-        })
         this.volumeList = []
       }
     },
-
-    /** 获取父组件链（用于调试） */
-    getParentChain() {
-      const chain = []
-      let current = this.$parent
-      let level = 0
-      while (current && level < 10) {
-        chain.push({
-          level: level,
-          componentName: current.$options.name || current.$options._componentTag || 'Unknown',
-          hasRefs: !!current.$refs,
-          refsKeys: current.$refs ? Object.keys(current.$refs) : []
-        })
-        current = current.$parent
-        level++
-      }
-      return chain
-    },
     /** 处理从卷别变化 */
     handleFromVolumeChange(value) {
-      console.log('[IntermissionManagement] handleFromVolumeChange 触发', {
-        value: value,
-        valueType: typeof value,
-        volumeListLength: this.volumeList.length
-      })
-
       if (!value) {
         // 清空选择
         this.intermissionForm.fromVolumeId = null
@@ -412,12 +340,6 @@ export default {
         return volumeValue === value || String(volumeValue) === String(value)
       })
 
-      console.log('[IntermissionManagement] 找到的卷别:', {
-        volume: volume,
-        volumeId: volume ? volume.id : null,
-        volumeTempId: volume ? volume.tempId : null
-      })
-
       if (volume) {
         this.$set(this.intermissionForm, 'fromVolume', volume.volumeName) // 保留用于显示
         // 判断是临时ID还是真实ID
@@ -425,34 +347,23 @@ export default {
           // 临时ID
           this.$set(this.intermissionForm, 'fromVolumeTempId', volume.tempId)
           this.$set(this.intermissionForm, 'fromVolumeId', null)
-          console.log('[IntermissionManagement] 设置临时ID:', volume.tempId)
         } else if (volume.id) {
           // 真实ID
           this.$set(this.intermissionForm, 'fromVolumeId', typeof volume.id === 'number' ? volume.id : parseInt(volume.id, 10))
           this.$set(this.intermissionForm, 'fromVolumeTempId', null)
-          console.log('[IntermissionManagement] 设置真实ID:', this.intermissionForm.fromVolumeId)
         }
 
-        // 触发表单验证（因为验证规则检查的是 fromVolumeId，但实际值可能在 fromVolumeTempId 中）
+        // 触发表单验证
         this.$nextTick(() => {
           if (this.$refs.intermissionForm) {
             this.$refs.intermissionForm.validateField('fromVolumeId')
           }
         })
-      } else {
-        console.warn('[IntermissionManagement] 未找到匹配的卷别:', value)
       }
+
     },
     /** 处理到卷别变化 */
     handleToVolumeChange(value) {
-      console.log('[IntermissionManagement] handleToVolumeChange 触发', {
-        value: value,
-        valueType: typeof value,
-        volumeListLength: this.volumeList.length,
-        currentToVolumeId: this.intermissionForm.toVolumeId,
-        currentToVolumeTempId: this.intermissionForm.toVolumeTempId
-      })
-
       if (value === null || value === undefined || value === '') {
         // 清空选择
         this.$set(this.intermissionForm, 'toVolumeId', null)
@@ -468,13 +379,6 @@ export default {
         return tempIdMatch || idMatch
       })
 
-      console.log('[IntermissionManagement] 找到的卷别:', {
-        volume: volume,
-        volumeId: volume ? volume.id : null,
-        volumeTempId: volume ? volume.tempId : null,
-        value: value
-      })
-
       if (volume) {
         this.$set(this.intermissionForm, 'toVolume', volume.volumeName) // 保留用于显示
         // 判断是临时ID还是真实ID
@@ -482,30 +386,20 @@ export default {
           // 临时ID
           this.$set(this.intermissionForm, 'toVolumeTempId', volume.tempId)
           this.$set(this.intermissionForm, 'toVolumeId', null)
-          console.log('[IntermissionManagement] 设置临时ID:', volume.tempId)
         } else if (volume.id) {
           // 真实ID
           this.$set(this.intermissionForm, 'toVolumeId', typeof volume.id === 'number' ? volume.id : parseInt(volume.id, 10))
           this.$set(this.intermissionForm, 'toVolumeTempId', null)
-          console.log('[IntermissionManagement] 设置真实ID:', this.intermissionForm.toVolumeId)
         }
 
-        // 触发表单验证（因为验证规则检查的是 toVolumeId，但实际值可能在 toVolumeTempId 中）
+        // 触发表单验证
         this.$nextTick(() => {
           if (this.$refs.intermissionForm) {
             this.$refs.intermissionForm.validateField('toVolumeId')
           }
         })
-
-        // 触发表单验证（因为验证规则检查的是 toVolumeId，但实际值可能在 toVolumeTempId 中）
-        this.$nextTick(() => {
-          if (this.$refs.intermissionForm) {
-            this.$refs.intermissionForm.validateField('toVolumeId')
-          }
-        })
-      } else {
-        console.warn('[IntermissionManagement] 未找到匹配的卷别:', value, 'volumeList:', this.volumeList)
       }
+
     },
     /** 加载卷别列表（完全从页面获取，不调用后端接口） */
     loadVolumeList() {
@@ -598,9 +492,15 @@ export default {
       try {
         const { getMediaDownloadUrl } = await import('@/api/exam/question')
         const { normalizeMediaUrl } = await import('@/utils/media')
+        // 清除URL中的签名参数（阿里云OSS签名参数），避免重复签名
+        let cleanUrl = rawUrl
+        if (rawUrl.includes('?') && (rawUrl.includes('Expires=') || rawUrl.includes('Signature='))) {
+          cleanUrl = rawUrl.split('?')[0]
+          console.log('[resolveMediaPreviewUrl] 清除签名参数后的URL:', cleanUrl)
+        }
         // 确保 url 参数存在且有效
-        if (rawUrl && rawUrl.trim() !== '') {
-        const response = await getMediaDownloadUrl({ url: rawUrl })
+        if (cleanUrl && cleanUrl.trim() !== '') {
+        const response = await getMediaDownloadUrl({ url: cleanUrl })
         const signedUrl = response?.downloadUrl || response?.data?.downloadUrl
         if (response?.code === 200 && signedUrl) {
           return signedUrl
@@ -689,6 +589,7 @@ export default {
     handleMediaUploadError(err) {
       this.$modal.msgError("上传失败：" + (err.message || "未知错误"))
     },
+
     /** 选择变化 */
     handleSelectionChange(selection) {
       this.selectedIds = selection.map(item => item.id)
@@ -703,17 +604,41 @@ export default {
       this.dialogTitle = "新增中场配置"
       // 生成临时ID
       const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      
+      const firstVol = this.volumeList.length > 0 ? this.volumeList[0] : null
+      const secondVol = this.volumeList.length > 1 ? this.volumeList[1] : null
+
       this.intermissionForm = {
         id: tempId, // 使用临时ID
         paperId: this.paperId,
-        fromVolume: this.volumeList.length > 0 ? this.volumeList[0].volumeCode : undefined,
-        toVolume: this.volumeList.length > 1 ? this.volumeList[1].volumeCode : undefined,
+        // 设置默认值：第一个卷别 -> 第二个卷别 (如果是单卷别，则第二个为空)
+        fromVolumeId: firstVol ? firstVol.id : undefined,
+        fromVolumeTempId: firstVol ? firstVol.tempId : undefined,
+        fromVolume: firstVol ? firstVol.volumeName : undefined,
+        
+        toVolumeId: secondVol ? secondVol.id : undefined,
+        toVolumeTempId: secondVol ? secondVol.tempId : undefined,
+        toVolume: secondVol ? secondVol.volumeName : undefined,
+        
         intermissionText: undefined,
         canSkip: false
       }
+      
       // 清空音频文件列表和URL
       this.intermissionAudioFileList = []
       this.intermissionAudioUrl = null
+
+      //如果存在默认音频，则自动填充
+      if (this.defaultAudioUrl) {
+        this.intermissionAudioUrl = this.defaultAudioUrl
+        this.$set(this.intermissionAudioMap, tempId, {
+          url: this.defaultAudioUrl,
+          path: this.defaultAudioUrl,
+          duration: null
+        })
+        this.updateIntermissionAudioFileList(this.defaultAudioUrl)
+      }
+
       this.dialogVisible = true
       this.$nextTick(() => {
         this.$refs.intermissionForm && this.$refs.intermissionForm.clearValidate()
@@ -745,9 +670,7 @@ export default {
       const audio = this.intermissionAudioMap[row.id]
       if (audio && audio.url) {
         this.intermissionAudioUrl = audio.url // 设置 OssUpload 的 v-model
-        await this.updateIntermissionAudioFileList(audio.url)
       } else {
-        this.intermissionAudioFileList = []
         this.intermissionAudioUrl = null
       }
       this.dialogVisible = true
@@ -791,6 +714,74 @@ export default {
         this.selectedIds = []
         this.$modal.msgSuccess("删除成功（待保存）")
       }).catch(() => {})
+    },
+    /** 
+     * 生成默认中场配置（异步获取音频时长）
+     * @param {Array} volumes 卷别列表
+     * @param {String} defaultAudioUrl 默认音频URL (从字典 sys_exam_default_audio 获取)
+     */
+    async generateDefaults(volumes, defaultAudioUrl) {
+      // Clear existing
+      this.intermissionList = []
+      this.intermissionAudioMap = {}
+      this.intermissionAudioUrl = null
+      
+      // Load volume list (This populates this.volumeList with robust IDs)
+      this.loadVolumeListFromStructure()
+      
+      // Use this.volumeList instead of raw volumes argument to ensure ID match
+      const sourceVolumes = this.volumeList
+      
+      if (!sourceVolumes || sourceVolumes.length === 0) {
+        return
+      }
+
+      // 先获取默认音频时长（如果有默认音频）
+      let defaultAudioDuration = null
+      if (defaultAudioUrl) {
+        console.log('[generateDefaults] 开始获取中场默认音频时长:', defaultAudioUrl)
+        defaultAudioDuration = await getAudioDuration(defaultAudioUrl)
+        console.log('[generateDefaults] 中场音频时长:', defaultAudioDuration, '秒')
+      }
+
+      // Generate defaults
+      for (let i = 0; i < sourceVolumes.length; i++) {
+        const fromVol = sourceVolumes[i]
+        const toVol = sourceVolumes[i + 1] // Last one is undefined
+        
+        // Generate temporary intermission ID
+        const intermissionId = `temp_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 5)}`
+        
+        // Extract IDs based on what loadVolumeListFromStructure produced (id or tempId)
+        // Note: fromVol/toVol are now objects from this.volumeList, which MUST have id or tempId populated
+        
+        const newItem = {
+          id: intermissionId,
+          paperId: this.paperId,
+          fromVolume: fromVol.volumeName,
+          // Use the EXACT keys that match el-select :value
+          fromVolumeTempId: fromVol.tempId,
+          fromVolumeId: fromVol.id, 
+          
+          toVolume: toVol ? toVol.volumeName : null,
+          toVolumeTempId: toVol ? toVol.tempId : undefined,
+          toVolumeId: toVol ? toVol.id : undefined,
+          
+          intermissionText: undefined,
+          canSkip: false
+        }
+        
+        this.intermissionList.push(newItem)
+        
+        // Set default audio with duration
+        if (defaultAudioUrl) {
+          this.$set(this.intermissionAudioMap, intermissionId, {
+            url: defaultAudioUrl,
+            path: defaultAudioUrl, 
+            duration: defaultAudioDuration // 使用获取到的时长
+          })
+        }
+      }
     },
     /** 提交 */
     handleSubmit() {

@@ -1,6 +1,8 @@
 package com.ruoyi.student.archive.domain.question;
 
+import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.ruoyi.common.core.domain.BaseEntity;
 import lombok.AllArgsConstructor;
@@ -23,7 +25,7 @@ import java.util.List;
 @NoArgsConstructor
 public class Question extends BaseEntity implements Serializable {
 
-
+    @TableId(type = IdType.AUTO)
     private Integer id;
     /**
      * 分类id
@@ -100,4 +102,21 @@ public class Question extends BaseEntity implements Serializable {
      */
     @TableField(exist = false)
     private List<QuestionBlankArea> blankAreas;
-} 
+
+    // ========== 作文题字段 ==========
+
+    /**
+     * 词数限制（0表示不限制）
+     */
+    private Integer wordLimit;
+
+    /**
+     * 写作要求（JSON数组格式存储）
+     */
+    private String requirements;
+
+    /**
+     * 参考范文
+     */
+    private String sampleAnswer;
+}

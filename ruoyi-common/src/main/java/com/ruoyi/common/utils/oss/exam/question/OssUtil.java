@@ -81,40 +81,41 @@ public class OssUtil {
     /**
      * 分片上传大文件到OSS（用于大文件上传，支持进度回调）
      * 
-     * @param inputStream 文件输入流
-     * @param objectKey   OSS对象键（完整路径，不自动生成）
-     * @param contentType 文件类型
-     * @param fileSize    文件大小（字节）
-     * @param chunkSize   分片大小（字节），默认10MB
+     * @param inputStream      文件输入流
+     * @param objectKey        OSS对象键（完整路径，不自动生成）
+     * @param contentType      文件类型
+     * @param fileSize         文件大小（字节）
+     * @param chunkSize        分片大小（字节），默认10MB
      * @param progressCallback 进度回调（已上传字节数, 总字节数），null表示不回调
      * @return OSS文件URL
      */
-    public String uploadMultipart(InputStream inputStream, String objectKey, String contentType, 
-                                 long fileSize, Long chunkSize, 
-                                 java.util.function.BiConsumer<Long, Long> progressCallback) {
+    public String uploadMultipart(InputStream inputStream, String objectKey, String contentType,
+            long fileSize, Long chunkSize,
+            java.util.function.BiConsumer<Long, Long> progressCallback) {
         // 直接使用提供的objectKey，不自动生成路径（用于试卷包等固定路径文件）
-        return getOssService().uploadMultipart(inputStream, objectKey, contentType, 
+        return getOssService().uploadMultipart(inputStream, objectKey, contentType,
                 fileSize, chunkSize, progressCallback);
     }
 
     /**
      * 分片上传大文件到OSS（支持断点续传）
      * 
-     * @param inputStream 文件输入流
-     * @param objectKey   OSS对象键（完整路径，不自动生成）
-     * @param contentType 文件类型
-     * @param fileSize    文件大小（字节）
-     * @param chunkSize   分片大小（字节）
-     * @param uploadId    已存在的上传ID（用于断点续传，null表示新上传）
-     * @param uploadedParts 已上传的分片列表（用于断点续传，null表示新上传）
+     * @param inputStream      文件输入流
+     * @param objectKey        OSS对象键（完整路径，不自动生成）
+     * @param contentType      文件类型
+     * @param fileSize         文件大小（字节）
+     * @param chunkSize        分片大小（字节）
+     * @param uploadId         已存在的上传ID（用于断点续传，null表示新上传）
+     * @param uploadedParts    已上传的分片列表（用于断点续传，null表示新上传）
      * @param progressCallback 进度回调（已上传字节数, 总字节数），null表示不回调
      * @return 上传结果，包含fileUrl和uploadId
      */
-    public IOssService.UploadResult uploadMultipartWithResume(InputStream inputStream, String objectKey, String contentType, 
-                                                              long fileSize, Long chunkSize, 
-                                                              String uploadId, java.util.List<IOssService.PartInfo> uploadedParts,
-                                                              java.util.function.BiConsumer<Long, Long> progressCallback) {
-        return getOssService().uploadMultipartWithResume(inputStream, objectKey, contentType, 
+    public IOssService.UploadResult uploadMultipartWithResume(InputStream inputStream, String objectKey,
+            String contentType,
+            long fileSize, Long chunkSize,
+            String uploadId, java.util.List<IOssService.PartInfo> uploadedParts,
+            java.util.function.BiConsumer<Long, Long> progressCallback) {
+        return getOssService().uploadMultipartWithResume(inputStream, objectKey, contentType,
                 fileSize, chunkSize, uploadId, uploadedParts, progressCallback);
     }
 
@@ -357,12 +358,90 @@ public class OssUtil {
     }
 
     /**
+     * 为指定桶获取私有文件的临时下载URL
+     * 用于跨桶下载，如从 asr-temp-audio 桶下载文件
+     * 
+     * @param bucketName 桶名
+     * @param objectKey  OSS对象键
+     * @param expiration 过期时间（秒）
+     * @return 带签名的临时下载URL
+     */
+    public String getPrivateDownloadUrlForBucket(String bucketName, String objectKey, long expiration) {
+        IOssService ossService = getOssService();
+        if (ossService instanceof com.ruoyi.common.utils.oss.impl.AliyunOssService) {
+            return ((com.ruoyi.common.utils.oss.impl.AliyunOssService) ossService)
+                    .generatePresignedUrlForBucket(bucketName, objectKey, expiration);
+        }
+        // 其他 OSS 服务暂不支持跨桶，回退到默认桶
+        log.warn("当前 OSS 服务不支持跨桶签名，回退到默认桶: {}", bucketName);
+        return generatePresignedUrl(objectKey, expiration);
+    }
+
+    /**
      * 获取当前OSS类型（用于前端选择上传方式）
      * 
      * @return OSS类型（qiniu/aliyun）
      */
     public String getOssType() {
         return ossServiceFactory.getCurrentProvider();
+    }
+
+    /**
+     * 清洗 OSS URL，去掉签名参数，只保留干净的路径
+     * 例如：https://bucket.oss.com/path/file.mp3?OSSAccessKeyId=xxx&Signature=xxx
+     * -> https://bucket.oss.com/path/file.mp3
+     * 
+     * @param url 可能带签名参数的 URL
+     * @return 清洗后的 URL（不含签名参数）
+     */
+    public static String cleanOssUrl(String url) {
+        if (StringUtils.isEmpty(url)) {
+            return url;
+        }
+        // 如果包含查询参数，截取掉
+        int queryIndex = url.indexOf('?');
+        if (queryIndex > 0) {
+            return url.substring(0, queryIndex);
+        }
+        return url;
+    }
+
+    /**
+     * 从 URL 中提取 Object Key（相对路径）
+     * 支持多种格式的 URL：
+     * - 完整 URL：https://bucket.oss.com/exam/audio/file.mp3
+     * - 带签名的 URL：https://bucket.oss.com/exam/audio/file.mp3?OSSAccessKeyId=...
+     * - 相对路径：exam/audio/file.mp3
+     * 
+     * @param url URL 或路径
+     * @return Object Key（相对路径，不含域名和签名）
+     */
+    public static String extractCleanObjectKey(String url) {
+        if (StringUtils.isEmpty(url)) {
+            return url;
+        }
+
+        // 先清洗掉签名参数
+        String cleanUrl = cleanOssUrl(url);
+
+        // 如果不是 HTTP URL，直接返回
+        if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+            return cleanUrl;
+        }
+
+        // 从 URL 中提取路径部分
+        try {
+            java.net.URL parsedUrl = new java.net.URL(cleanUrl);
+            String path = parsedUrl.getPath();
+            // 去掉开头的斜杠
+            if (path.startsWith("/")) {
+                path = path.substring(1);
+            }
+            return path;
+        } catch (Exception e) {
+            log.warn("解析 URL 失败: {}", url, e);
+            return cleanUrl;
+        }
     }
 
 }

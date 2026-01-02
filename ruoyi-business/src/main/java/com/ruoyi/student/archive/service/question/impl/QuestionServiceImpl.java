@@ -44,6 +44,7 @@ public class QuestionServiceImpl implements QuestionService {
      * 根节点的父ID
      */
     public static final Integer DEFAULT_FATHER_ID = 1;
+
     @Override
     public QuestionInfoDTO getQuestion(QuestionIdBO idBO) throws ServiceException {
         Question question = questionBiz.getQuestionById(idBO.getId());
@@ -65,8 +66,8 @@ public class QuestionServiceImpl implements QuestionService {
     /**
      * 保存单个答案并返回保存后的实体
      *
-     * @param answerBO 答案BO对象
-     * @param questionId 问题ID
+     * @param answerBO    答案BO对象
+     * @param questionId  问题ID
      * @param blankAreaId 空位区域ID，可为null
      * @return 保存后的答案实体
      */
@@ -89,8 +90,8 @@ public class QuestionServiceImpl implements QuestionService {
     /**
      * 处理答案的媒体文件引用
      *
-     * @param answerBO 答案BO对象
-     * @param answerId 保存后的答案ID
+     * @param answerBO   答案BO对象
+     * @param answerId   保存后的答案ID
      * @param questionId 题目ID（用于选项媒体，确保question_id不为null）
      */
     public void processAnswerMediaReferences(QuestionAnswerBO answerBO, Integer answerId, Integer questionId) {
@@ -105,27 +106,27 @@ public class QuestionServiceImpl implements QuestionService {
 
             Integer finalQuestionId = questionId;
             List<QuestionMedia> mediaList = answerBO.getMediaUrl().stream()
-                .map(mediaBO -> {
-                    QuestionMedia media = new QuestionMedia();
-                    // 选项媒体也需要设置questionId（用于数据库约束，即使业务上不直接关联）
-                    media.setQuestionId(finalQuestionId);
-                    media.setOptionId(answerId);
-                    media.setMediaType(2); // 2-选项媒体
-                    media.setMediaName(mediaBO.getMediaName() != null ? mediaBO.getMediaName() : "");
-                    media.setMediaPath(mediaBO.getMediaPath());
-                    media.setMediaUrl(mediaBO.getMediaUrl());
-                    media.setMediaSize(mediaBO.getMediaSize());
-                    media.setMediaFormat(mediaBO.getMediaFormat());
-                    media.setMediaDuration(mediaBO.getMediaDuration());
-                    media.setIsCompressed(mediaBO.getIsCompressed());
-                    media.setStorageType(mediaBO.getStorageType());
-                    return media;
-                })
-                .collect(Collectors.toList());
+                    .map(mediaBO -> {
+                        QuestionMedia media = new QuestionMedia();
+                        // 选项媒体也需要设置questionId（用于数据库约束，即使业务上不直接关联）
+                        media.setQuestionId(finalQuestionId);
+                        media.setOptionId(answerId);
+                        media.setMediaType(2); // 2-选项媒体
+                        media.setMediaName(mediaBO.getMediaName() != null ? mediaBO.getMediaName() : "");
+                        media.setMediaPath(mediaBO.getMediaPath());
+                        media.setMediaUrl(mediaBO.getMediaUrl());
+                        media.setMediaSize(mediaBO.getMediaSize());
+                        media.setMediaFormat(mediaBO.getMediaFormat());
+                        media.setMediaDuration(mediaBO.getMediaDuration());
+                        media.setIsCompressed(mediaBO.getIsCompressed());
+                        media.setStorageType(mediaBO.getStorageType());
+                        return media;
+                    })
+                    .collect(Collectors.toList());
             questionMediaBiz.batchSave(mediaList);
         }
     }
-    
+
     /**
      * 处理答案的媒体文件引用（兼容旧方法，自动查找questionId）
      *
@@ -139,14 +140,13 @@ public class QuestionServiceImpl implements QuestionService {
     public void updateAnswerMediaReferences(QuestionAnswerBO answerBO, Integer answerId) {
         // 删除原有关联的选项媒体文件
         List<QuestionMedia> existingMedia = questionMediaBiz.list(
-            new LambdaQueryWrapper<QuestionMedia>()
-                .eq(QuestionMedia::getOptionId, answerId)
-                .eq(QuestionMedia::getMediaType, 2)
-        );
+                new LambdaQueryWrapper<QuestionMedia>()
+                        .eq(QuestionMedia::getOptionId, answerId)
+                        .eq(QuestionMedia::getMediaType, 2));
         if (!CollectionUtils.isEmpty(existingMedia)) {
             questionMediaBiz.removeByIds(existingMedia.stream().map(QuestionMedia::getId).collect(Collectors.toList()));
         }
-        
+
         // 保存新的媒体文件（通过answerId查找questionId）
         if (!CollectionUtils.isEmpty(answerBO.getMediaUrl())) {
             processAnswerMediaReferences(answerBO, answerId, null); // 传入null，方法内部会自动查找questionId
@@ -158,7 +158,7 @@ public class QuestionServiceImpl implements QuestionService {
      *
      * @param questionBO 问题BO对象
      * @param questionId 问题ID
-     * @param answerIds 保存正确答案ID的集合
+     * @param answerIds  保存正确答案ID的集合
      */
     public void processNormalAnswers(QuestionBO questionBO, Integer questionId, Set<String> answerIds) {
         if (questionBO.getAnswers() != null) {
@@ -181,8 +181,8 @@ public class QuestionServiceImpl implements QuestionService {
     /**
      * 处理完形填空题中单个空位区域的所有答案
      *
-     * @param areaBO 空位区域BO对象
-     * @param area 保存后的空位区域实体
+     * @param areaBO     空位区域BO对象
+     * @param area       保存后的空位区域实体
      * @param questionId 问题ID
      */
     public void processBlankAreaAnswers(QuestionBlankAreaBO areaBO, QuestionBlankArea area, Integer questionId) {
@@ -219,7 +219,8 @@ public class QuestionServiceImpl implements QuestionService {
      * @param questionId 问题ID
      */
     public void processBlankAreas(QuestionBO questionBO, Integer questionId) {
-        if (Objects.equals(questionBO.getType(), QuestionTypeEnum.CLOZE.getValue()) && questionBO.getBlankAreas() != null) {
+        if (Objects.equals(questionBO.getType(), QuestionTypeEnum.CLOZE.getValue())
+                && questionBO.getBlankAreas() != null) {
             // 保存空位区域
             for (QuestionBlankAreaBO areaBO : questionBO.getBlankAreas()) {
                 QuestionBlankArea area = new QuestionBlankArea();
@@ -244,12 +245,12 @@ public class QuestionServiceImpl implements QuestionService {
         if (question.getAnalyzes() != null && question.getAnalyzes().trim().isEmpty()) {
             question.setAnalyzes(null);
         }
-        if(question.getQuestionCategoryId()!= null){
-            QuestionCategory questionCategory =  questionCategoryBiz.getById(question.getQuestionCategoryId());
-            if(questionCategory == null){
+        if (question.getQuestionCategoryId() != null) {
+            QuestionCategory questionCategory = questionCategoryBiz.getById(question.getQuestionCategoryId());
+            if (questionCategory == null) {
                 throw new ServiceException(APP_QUESTION_CATEGORY_NOT_EXIST_MSG);
             }
-            if(questionCategory.getIsDefault()){
+            if (questionCategory.getIsDefault()) {
                 throw new ServiceException(APP_QUESTION_CATEGORY_NOT_ROOT_MSG);
             }
         }
@@ -259,37 +260,38 @@ public class QuestionServiceImpl implements QuestionService {
         // 处理问题的媒体文件引用（使用新的QuestionMedia表）
         if (!CollectionUtils.isEmpty(questionBO.getMediaUrl())) {
             List<QuestionMedia> mediaList = questionBO.getMediaUrl().stream()
-                .map(mediaBO -> {
-                    QuestionMedia media = new QuestionMedia();
-                    media.setQuestionId(questionId);
-                    media.setMediaType(1); // 1-题目媒体
-                    media.setMediaName(mediaBO.getMediaName() != null ? mediaBO.getMediaName() : "");
-                    media.setMediaPath(mediaBO.getMediaPath());
-                    media.setMediaUrl(mediaBO.getMediaUrl());
-                    media.setMediaSize(mediaBO.getMediaSize());
-                    media.setMediaFormat(mediaBO.getMediaFormat());
-                    media.setMediaDuration(mediaBO.getMediaDuration());
-                    media.setIsCompressed(mediaBO.getIsCompressed());
-                    media.setStorageType(mediaBO.getStorageType());
-                    return media;
-                })
-                .collect(Collectors.toList());
+                    .map(mediaBO -> {
+                        QuestionMedia media = new QuestionMedia();
+                        media.setQuestionId(questionId);
+                        media.setMediaType(1); // 1-题目媒体
+                        media.setMediaName(mediaBO.getMediaName() != null ? mediaBO.getMediaName() : "");
+                        media.setMediaPath(mediaBO.getMediaPath());
+                        media.setMediaUrl(mediaBO.getMediaUrl());
+                        media.setMediaSize(mediaBO.getMediaSize());
+                        media.setMediaFormat(mediaBO.getMediaFormat());
+                        media.setMediaDuration(mediaBO.getMediaDuration());
+                        media.setIsCompressed(mediaBO.getIsCompressed());
+                        media.setStorageType(mediaBO.getStorageType());
+                        return media;
+                    })
+                    .collect(Collectors.toList());
             questionMediaBiz.batchSave(mediaList);
         }
 
         // 处理问题的辅助识图引用（使用新的QuestionMedia表，mediaType=3）
         if (!CollectionUtils.isEmpty(questionBO.getAidedRecognitionUrl())) {
             List<QuestionMedia> recognitionMediaList = questionBO.getAidedRecognitionUrl().stream()
-                .map(recognitionBO -> {
-                    QuestionMedia media = new QuestionMedia();
-                    media.setQuestionId(questionId);
-                    media.setMediaType(3); // 3-辅助识图
-                    media.setMediaName(recognitionBO.getMaterialName() != null ? recognitionBO.getMaterialName() : "");
-                    media.setMediaPath(recognitionBO.getMaterialPath());
-                    // 辅助识图通常只有路径，没有URL，如果需要可以后续扩展
-                    return media;
-                })
-                .collect(Collectors.toList());
+                    .map(recognitionBO -> {
+                        QuestionMedia media = new QuestionMedia();
+                        media.setQuestionId(questionId);
+                        media.setMediaType(3); // 3-辅助识图
+                        media.setMediaName(
+                                recognitionBO.getMaterialName() != null ? recognitionBO.getMaterialName() : "");
+                        media.setMediaPath(recognitionBO.getMaterialPath());
+                        // 辅助识图通常只有路径，没有URL，如果需要可以后续扩展
+                        return media;
+                    })
+                    .collect(Collectors.toList());
             questionMediaBiz.batchSave(recognitionMediaList);
         }
 
@@ -320,12 +322,12 @@ public class QuestionServiceImpl implements QuestionService {
         List<QuestionAnswer> existingAnswers = questionAnswerBiz.getAnswersByQuestionId(questionId);
         if (!CollectionUtils.isEmpty(existingAnswers)) {
             List<Integer> optionIds = existingAnswers.stream()
-                .map(QuestionAnswer::getId)
-                .collect(Collectors.toList());
+                    .map(QuestionAnswer::getId)
+                    .collect(Collectors.toList());
             // 删除选项的媒体文件
             if (!CollectionUtils.isEmpty(optionIds)) {
                 questionMediaBiz.remove(new LambdaQueryWrapper<QuestionMedia>()
-                    .in(QuestionMedia::getOptionId, optionIds));
+                        .in(QuestionMedia::getOptionId, optionIds));
             }
             // 删除选项
             questionAnswerBiz.deleteByQuestionId(List.of(questionId));
@@ -342,36 +344,37 @@ public class QuestionServiceImpl implements QuestionService {
         // 4. 重新保存题目媒体文件
         if (!CollectionUtils.isEmpty(questionBO.getMediaUrl())) {
             List<QuestionMedia> mediaList = questionBO.getMediaUrl().stream()
-                .map(mediaBO -> {
-                    QuestionMedia media = new QuestionMedia();
-                    media.setQuestionId(questionId);
-                    media.setMediaType(1); // 1-题目媒体
-                    media.setMediaName(mediaBO.getMediaName() != null ? mediaBO.getMediaName() : "");
-                    media.setMediaPath(mediaBO.getMediaPath());
-                    media.setMediaUrl(mediaBO.getMediaUrl());
-                    media.setMediaSize(mediaBO.getMediaSize());
-                    media.setMediaFormat(mediaBO.getMediaFormat());
-                    media.setMediaDuration(mediaBO.getMediaDuration());
-                    media.setIsCompressed(mediaBO.getIsCompressed());
-                    media.setStorageType(mediaBO.getStorageType());
-                    return media;
-                })
-                .collect(Collectors.toList());
+                    .map(mediaBO -> {
+                        QuestionMedia media = new QuestionMedia();
+                        media.setQuestionId(questionId);
+                        media.setMediaType(1); // 1-题目媒体
+                        media.setMediaName(mediaBO.getMediaName() != null ? mediaBO.getMediaName() : "");
+                        media.setMediaPath(mediaBO.getMediaPath());
+                        media.setMediaUrl(mediaBO.getMediaUrl());
+                        media.setMediaSize(mediaBO.getMediaSize());
+                        media.setMediaFormat(mediaBO.getMediaFormat());
+                        media.setMediaDuration(mediaBO.getMediaDuration());
+                        media.setIsCompressed(mediaBO.getIsCompressed());
+                        media.setStorageType(mediaBO.getStorageType());
+                        return media;
+                    })
+                    .collect(Collectors.toList());
             questionMediaBiz.batchSave(mediaList);
         }
 
         // 5. 重新保存辅助识图
         if (!CollectionUtils.isEmpty(questionBO.getAidedRecognitionUrl())) {
             List<QuestionMedia> recognitionMediaList = questionBO.getAidedRecognitionUrl().stream()
-                .map(recognitionBO -> {
-                    QuestionMedia media = new QuestionMedia();
-                    media.setQuestionId(questionId);
-                    media.setMediaType(3); // 3-辅助识图
-                    media.setMediaName(recognitionBO.getMaterialName() != null ? recognitionBO.getMaterialName() : "");
-                    media.setMediaPath(recognitionBO.getMaterialPath());
-                    return media;
-                })
-                .collect(Collectors.toList());
+                    .map(recognitionBO -> {
+                        QuestionMedia media = new QuestionMedia();
+                        media.setQuestionId(questionId);
+                        media.setMediaType(3); // 3-辅助识图
+                        media.setMediaName(
+                                recognitionBO.getMaterialName() != null ? recognitionBO.getMaterialName() : "");
+                        media.setMediaPath(recognitionBO.getMaterialPath());
+                        return media;
+                    })
+                    .collect(Collectors.toList());
             questionMediaBiz.batchSave(recognitionMediaList);
         }
 
@@ -388,7 +391,8 @@ public class QuestionServiceImpl implements QuestionService {
         }
 
         // 7. 重新保存完形填空区域
-        if (Objects.equals(questionBO.getType(), QuestionTypeEnum.CLOZE.getValue()) && questionBO.getBlankAreas() != null) {
+        if (Objects.equals(questionBO.getType(), QuestionTypeEnum.CLOZE.getValue())
+                && questionBO.getBlankAreas() != null) {
             processBlankAreas(questionBO, questionId);
         }
 
@@ -401,9 +405,10 @@ public class QuestionServiceImpl implements QuestionService {
 
     /**
      * 差异化更新普通题目答案
+     * 
      * @param questionBO 题目BO
      * @param questionId 题目ID
-     * @param answerIds 正确答案ID集合
+     * @param answerIds  正确答案ID集合
      */
     private void processNormalAnswersDiff(QuestionBO questionBO, Integer questionId, Set<String> answerIds) {
         if (CollectionUtils.isEmpty(questionBO.getAnswers())) {
@@ -452,6 +457,7 @@ public class QuestionServiceImpl implements QuestionService {
 
     /**
      * 差异化更新完形填空区域
+     * 
      * @param questionBO 题目BO
      * @param questionId 题目ID
      */
@@ -551,7 +557,8 @@ public class QuestionServiceImpl implements QuestionService {
 
     /**
      * 差异化更新空位区域的答案
-     * @param areaBO 空位区域BO
+     * 
+     * @param areaBO      空位区域BO
      * @param blankAreaId 空位区域ID
      */
     private void processBlankAreaAnswersDiff(QuestionBlankAreaBO areaBO, Integer blankAreaId) throws ServiceException {
@@ -559,7 +566,8 @@ public class QuestionServiceImpl implements QuestionService {
             questionAnswerBiz.deleteByBlankAreaId(Collections.singletonList(blankAreaId));
             return;
         }
-        List<QuestionAnswer> existingAnswers = questionAnswerBiz.getAnswersByBlankAreaId(areaBO.getQuestionId(), blankAreaId);
+        List<QuestionAnswer> existingAnswers = questionAnswerBiz.getAnswersByBlankAreaId(areaBO.getQuestionId(),
+                blankAreaId);
         Map<Integer, QuestionAnswer> existingAnswerMap = new HashMap<>();
         if (!CollectionUtils.isEmpty(existingAnswers)) {
             for (QuestionAnswer answer : existingAnswers) {
@@ -610,28 +618,29 @@ public class QuestionServiceImpl implements QuestionService {
             return;
         }
         List<Question> questions = questionBiz.getBaseMapper().selectBatchIds(idsBO.getIds());
-        if(CollectionUtils.isEmpty(questions)){
+        if (CollectionUtils.isEmpty(questions)) {
             return;
         }
-        boolean hasBusinessRefs = questionCategoryBusinessRefBiz.hasBusinessRefs(questions.stream().map(Question::getQuestionCategoryId).collect(Collectors.toList()));
-        if(hasBusinessRefs){
-                throw new ServiceException(APP_QUESTION_HAS_REF_MSG);
+        boolean hasBusinessRefs = questionCategoryBusinessRefBiz
+                .hasBusinessRefs(questions.stream().map(Question::getQuestionCategoryId).collect(Collectors.toList()));
+        if (hasBusinessRefs) {
+            throw new ServiceException(APP_QUESTION_HAS_REF_MSG);
         }
         // 删除题目的媒体文件（使用新的QuestionMedia表）
         for (Integer questionId : idsBO.getIds()) {
             questionMediaBiz.deleteByQuestionId(questionId);
-            
+
             // 删除选项的媒体文件
             List<QuestionAnswer> answers = questionAnswerBiz.getAnswersByQuestionId(questionId);
             if (!CollectionUtils.isEmpty(answers)) {
                 for (QuestionAnswer answer : answers) {
                     List<QuestionMedia> answerMedia = questionMediaBiz.list(
-                        new LambdaQueryWrapper<QuestionMedia>()
-                            .eq(QuestionMedia::getOptionId, answer.getId())
-                            .eq(QuestionMedia::getMediaType, 2)
-                    );
+                            new LambdaQueryWrapper<QuestionMedia>()
+                                    .eq(QuestionMedia::getOptionId, answer.getId())
+                                    .eq(QuestionMedia::getMediaType, 2));
                     if (!CollectionUtils.isEmpty(answerMedia)) {
-                        questionMediaBiz.removeByIds(answerMedia.stream().map(QuestionMedia::getId).collect(Collectors.toList()));
+                        questionMediaBiz.removeByIds(
+                                answerMedia.stream().map(QuestionMedia::getId).collect(Collectors.toList()));
                     }
                 }
             }
@@ -661,14 +670,14 @@ public class QuestionServiceImpl implements QuestionService {
     @Transactional(rollbackFor = Exception.class)
     public void batchCopyQuestion(QuestionCopyBO copyBO) throws ServiceException {
         List<Question> sourceQuestions = questionBiz.listByIds(copyBO.getQuestionIds());
-        
+
         for (Question sourceQuestion : sourceQuestions) {
             Question newQuestion = new Question();
             BeanUtil.copyProperties(sourceQuestion, newQuestion);
             newQuestion.setId(null);
             newQuestion.setQuestionCategoryId(copyBO.getTargetCategoryId());
             questionBiz.createQuestion(newQuestion);
-            
+
             List<QuestionAnswer> sourceAnswers = questionAnswerBiz.getAnswersByQuestionId(sourceQuestion.getId());
             if (!sourceAnswers.isEmpty()) {
                 Set<String> answerIds = new LinkedHashSet<>();
@@ -681,20 +690,19 @@ public class QuestionServiceImpl implements QuestionService {
                             questionAnswerBiz.save(newAnswer);
                             // 复制选项的媒体文件
                             List<QuestionMedia> sourceAnswerMedia = questionMediaBiz.list(
-                                new LambdaQueryWrapper<QuestionMedia>()
-                                    .eq(QuestionMedia::getOptionId, sourceAnswer.getId())
-                                    .eq(QuestionMedia::getMediaType, 2)
-                            );
+                                    new LambdaQueryWrapper<QuestionMedia>()
+                                            .eq(QuestionMedia::getOptionId, sourceAnswer.getId())
+                                            .eq(QuestionMedia::getMediaType, 2));
                             if (!CollectionUtils.isEmpty(sourceAnswerMedia)) {
                                 List<QuestionMedia> newAnswerMedia = sourceAnswerMedia.stream()
-                                    .map(sourceMedia -> {
-                                        QuestionMedia newMedia = new QuestionMedia();
-                                        BeanUtil.copyProperties(sourceMedia, newMedia);
-                                        newMedia.setId(null);
-                                        newMedia.setOptionId(newAnswer.getId());
-                                        return newMedia;
-                                    })
-                                    .collect(Collectors.toList());
+                                        .map(sourceMedia -> {
+                                            QuestionMedia newMedia = new QuestionMedia();
+                                            BeanUtil.copyProperties(sourceMedia, newMedia);
+                                            newMedia.setId(null);
+                                            newMedia.setOptionId(newAnswer.getId());
+                                            return newMedia;
+                                        })
+                                        .collect(Collectors.toList());
                                 questionMediaBiz.batchSave(newAnswerMedia);
                             }
                             return newAnswer;
@@ -708,9 +716,10 @@ public class QuestionServiceImpl implements QuestionService {
                 newQuestion.setAnswer(String.join(",", answerIds));
                 questionBiz.updateById(newQuestion);
             }
-            
+
             if (Objects.equals(sourceQuestion.getType(), QuestionTypeEnum.CLOZE.getValue())) {
-                List<QuestionBlankArea> sourceBlankAreas = questionBlankAreaBiz.getBlankAreasByQuestionId(sourceQuestion.getId());
+                List<QuestionBlankArea> sourceBlankAreas = questionBlankAreaBiz
+                        .getBlankAreasByQuestionId(sourceQuestion.getId());
                 if (!sourceBlankAreas.isEmpty()) {
                     for (QuestionBlankArea sourceArea : sourceBlankAreas) {
                         QuestionBlankArea newArea = new QuestionBlankArea();
@@ -720,7 +729,8 @@ public class QuestionServiceImpl implements QuestionService {
                         questionBlankAreaBiz.saveBlankAreas(List.of(newArea));
 
                         // 复制该空位区域的答案列表
-                        List<QuestionAnswer> sourceBlankAnswers = questionAnswerBiz.getAnswersByBlankAreaId(sourceQuestion.getId(), sourceArea.getId());
+                        List<QuestionAnswer> sourceBlankAnswers = questionAnswerBiz
+                                .getAnswersByBlankAreaId(sourceQuestion.getId(), sourceArea.getId());
                         if (!CollectionUtils.isEmpty(sourceBlankAnswers)) {
                             Set<String> answerIds = new LinkedHashSet<>();
                             List<QuestionAnswer> newBlankAnswers = sourceBlankAnswers.stream()
@@ -750,29 +760,30 @@ public class QuestionServiceImpl implements QuestionService {
             List<QuestionMedia> sourceMediaList = questionMediaBiz.listByQuestionIdAndType(sourceQuestion.getId(), 1);
             if (!CollectionUtils.isEmpty(sourceMediaList)) {
                 List<QuestionMedia> newMediaList = sourceMediaList.stream()
-                    .map(sourceMedia -> {
-                        QuestionMedia newMedia = new QuestionMedia();
-                        BeanUtil.copyProperties(sourceMedia, newMedia);
-                        newMedia.setId(null);
-                        newMedia.setQuestionId(newQuestion.getId());
-                        return newMedia;
-                    })
-                    .collect(Collectors.toList());
+                        .map(sourceMedia -> {
+                            QuestionMedia newMedia = new QuestionMedia();
+                            BeanUtil.copyProperties(sourceMedia, newMedia);
+                            newMedia.setId(null);
+                            newMedia.setQuestionId(newQuestion.getId());
+                            return newMedia;
+                        })
+                        .collect(Collectors.toList());
                 questionMediaBiz.batchSave(newMediaList);
             }
 
             // 复制题目的辅助识图（使用新的QuestionMedia表，mediaType=3）
-            List<QuestionMedia> sourceRecognitionMedia = questionMediaBiz.listByQuestionIdAndType(sourceQuestion.getId(), 3);
+            List<QuestionMedia> sourceRecognitionMedia = questionMediaBiz
+                    .listByQuestionIdAndType(sourceQuestion.getId(), 3);
             if (!CollectionUtils.isEmpty(sourceRecognitionMedia)) {
                 List<QuestionMedia> newRecognitionMediaList = sourceRecognitionMedia.stream()
-                    .map(media -> {
-                        QuestionMedia newMedia = new QuestionMedia();
-                        BeanUtil.copyProperties(media, newMedia);
-                        newMedia.setId(null);
-                        newMedia.setQuestionId(newQuestion.getId());
-                        return newMedia;
-                    })
-                    .collect(Collectors.toList());
+                        .map(media -> {
+                            QuestionMedia newMedia = new QuestionMedia();
+                            BeanUtil.copyProperties(media, newMedia);
+                            newMedia.setId(null);
+                            newMedia.setQuestionId(newQuestion.getId());
+                            return newMedia;
+                        })
+                        .collect(Collectors.toList());
                 questionMediaBiz.batchSave(newRecognitionMediaList);
             }
         }
@@ -802,15 +813,16 @@ public class QuestionServiceImpl implements QuestionService {
         Map<String, List<String>> optionsMap = new HashMap<>();
         List<QuestionBlankAreaDTO> blankAreaList = new ArrayList<>();
         for (QuestionBlankArea area : blankAreas) {
-                QuestionBlankAreaDTO areaDTO = new QuestionBlankAreaDTO();
+            QuestionBlankAreaDTO areaDTO = new QuestionBlankAreaDTO();
             BeanUtil.copyProperties(area, areaDTO);
-                blankAreaList.add(areaDTO);
-                answerMap.put(String.valueOf(area.getBlankIndex()), area.getAnswerIds());
-            List<QuestionAnswer> answers = questionAnswerBiz.getAnswersByBlankAreaId(area.getQuestionId(), area.getId());
+            blankAreaList.add(areaDTO);
+            answerMap.put(String.valueOf(area.getBlankIndex()), area.getAnswerIds());
+            List<QuestionAnswer> answers = questionAnswerBiz.getAnswersByBlankAreaId(area.getQuestionId(),
+                    area.getId());
             List<String> options = answers.stream()
-                        .map(QuestionAnswer::getOptionContent)
-                        .collect(Collectors.toList());
-                optionsMap.put(String.valueOf(area.getBlankIndex()), options);
+                    .map(QuestionAnswer::getOptionContent)
+                    .collect(Collectors.toList());
+            optionsMap.put(String.valueOf(area.getBlankIndex()), options);
         }
 
         dto.setBlankAnswerMap(answerMap);
@@ -825,16 +837,15 @@ public class QuestionServiceImpl implements QuestionService {
     public Page<QuestionInfoDTO> pageList(QuestionPageBO pageBO) {
         Question condition = new Question();
         BeanUtil.copyProperties(pageBO, condition);
-        condition.setQuestionCategoryId(pageBO.getCategoryId() == null ? DEFAULT_FATHER_ID: pageBO.getCategoryId());
-        
+        condition.setQuestionCategoryId(pageBO.getCategoryId() == null ? DEFAULT_FATHER_ID : pageBO.getCategoryId());
+
         // 从请求参数中获取分页信息，默认值：pageNum=1, pageSize=10
         Integer pageNum = pageBO.getPageNum() != null && pageBO.getPageNum() > 0 ? pageBO.getPageNum() : 1;
         Integer pageSize = pageBO.getPageSize() != null && pageBO.getPageSize() > 0 ? pageBO.getPageSize() : 10;
-        
+
         Page<Question> page = questionBiz.pageList(
-            new Page<>(pageNum, pageSize),
-            condition
-        );
+                new Page<>(pageNum, pageSize),
+                condition);
 
         return (Page<QuestionInfoDTO>) page.convert(this::convertToPageDTO);
     }
@@ -860,13 +871,13 @@ public class QuestionServiceImpl implements QuestionService {
         List<QuestionMedia> questionMediaList = questionMediaBiz.listByQuestionIdAndType(question.getId(), 1);
         if (!CollectionUtils.isEmpty(questionMediaList)) {
             List<QuestionMediaDTO> mediaList = questionMediaList.stream()
-                .map(media -> {
-                    QuestionMediaDTO mediaDTO = new QuestionMediaDTO();
-                    BeanUtil.copyProperties(media, mediaDTO);
-                    // 兼容字段
-                    mediaDTO.setMaterialId(media.getId());
-                    mediaDTO.setSortNum(0); // 新表结构中没有排序号，使用默认值
-                    return mediaDTO;
+                    .map(media -> {
+                        QuestionMediaDTO mediaDTO = new QuestionMediaDTO();
+                        BeanUtil.copyProperties(media, mediaDTO);
+                        // 兼容字段
+                        mediaDTO.setMaterialId(media.getId());
+                        mediaDTO.setSortNum(0); // 新表结构中没有排序号，使用默认值
+                        return mediaDTO;
                     })
                     .collect(Collectors.toList());
             dto.setMediaUrl(mediaList);
@@ -876,12 +887,12 @@ public class QuestionServiceImpl implements QuestionService {
         List<QuestionMedia> recognitionMediaList = questionMediaBiz.listByQuestionIdAndType(question.getId(), 3);
         if (!CollectionUtils.isEmpty(recognitionMediaList)) {
             List<QuestionRecognitionDTO> recognitionList = recognitionMediaList.stream()
-                .map(media -> {
+                    .map(media -> {
                         QuestionRecognitionDTO recognition = new QuestionRecognitionDTO();
-                    recognition.setMaterialId(media.getId());
-                    recognition.setMaterialPath(media.getMediaPath());
-                    recognition.setMaterialName(media.getMediaName());
-                    recognition.setSortNum(0); // 新表结构中没有排序号，使用默认值
+                        recognition.setMaterialId(media.getId());
+                        recognition.setMaterialPath(media.getMediaPath());
+                        recognition.setMaterialName(media.getMediaName());
+                        recognition.setSortNum(0); // 新表结构中没有排序号，使用默认值
                         return recognition;
                     })
                     .collect(Collectors.toList());
@@ -908,17 +919,20 @@ public class QuestionServiceImpl implements QuestionService {
             dto.setSubjectName("");
         }
 
-        // 获取题目的媒体文件（使用新的QuestionMedia表）
-        List<QuestionMedia> questionMediaList = questionMediaBiz.listByQuestionIdAndType(question.getId(), 1);
+        // 获取题目的媒体文件（使用新的QuestionMedia表，包含 mediaType=1 题目媒体 和 mediaType=4 题目音频）
+        List<QuestionMedia> questionMediaList = questionMediaBiz.list(
+                new LambdaQueryWrapper<QuestionMedia>()
+                        .eq(QuestionMedia::getQuestionId, question.getId())
+                        .in(QuestionMedia::getMediaType, Arrays.asList(1, 4)));
         if (!CollectionUtils.isEmpty(questionMediaList)) {
             List<QuestionMediaDTO> mediaList = questionMediaList.stream()
-                .map(media -> {
-                    QuestionMediaDTO mediaDTO = new QuestionMediaDTO();
-                    BeanUtil.copyProperties(media, mediaDTO);
-                    // 兼容字段
-                    mediaDTO.setMaterialId(media.getId());
-                    mediaDTO.setSortNum(0); // 新表结构中没有排序号，使用默认值
-                    return mediaDTO;
+                    .map(media -> {
+                        QuestionMediaDTO mediaDTO = new QuestionMediaDTO();
+                        BeanUtil.copyProperties(media, mediaDTO);
+                        // 兼容字段
+                        mediaDTO.setMaterialId(media.getId());
+                        mediaDTO.setSortNum(0); // 新表结构中没有排序号，使用默认值
+                        return mediaDTO;
                     })
                     .collect(Collectors.toList());
             dto.setMediaUrl(mediaList);
@@ -928,12 +942,12 @@ public class QuestionServiceImpl implements QuestionService {
         List<QuestionMedia> recognitionMediaList = questionMediaBiz.listByQuestionIdAndType(question.getId(), 3);
         if (!CollectionUtils.isEmpty(recognitionMediaList)) {
             List<QuestionRecognitionDTO> recognitionList = recognitionMediaList.stream()
-                .map(media -> {
+                    .map(media -> {
                         QuestionRecognitionDTO recognition = new QuestionRecognitionDTO();
-                    recognition.setMaterialId(media.getId());
-                    recognition.setMaterialPath(media.getMediaPath());
-                    recognition.setMaterialName(media.getMediaName());
-                    recognition.setSortNum(0); // 新表结构中没有排序号，使用默认值
+                        recognition.setMaterialId(media.getId());
+                        recognition.setMaterialPath(media.getMediaPath());
+                        recognition.setMaterialName(media.getMediaName());
+                        recognition.setSortNum(0); // 新表结构中没有排序号，使用默认值
                         return recognition;
                     })
                     .collect(Collectors.toList());
@@ -946,22 +960,21 @@ public class QuestionServiceImpl implements QuestionService {
                     .map(answer -> {
                         QuestionAnswerDTO answerDTO = new QuestionAnswerDTO();
                         BeanUtil.copyProperties(answer, answerDTO);
-                        
+
                         // 获取选项的媒体文件（使用新的QuestionMedia表）
                         List<QuestionMedia> answerMediaList = questionMediaBiz.list(
-                            new LambdaQueryWrapper<QuestionMedia>()
-                                .eq(QuestionMedia::getOptionId, answer.getId())
-                                .eq(QuestionMedia::getMediaType, 2)
-                        );
+                                new LambdaQueryWrapper<QuestionMedia>()
+                                        .eq(QuestionMedia::getOptionId, answer.getId())
+                                        .eq(QuestionMedia::getMediaType, 2));
                         if (!CollectionUtils.isEmpty(answerMediaList)) {
                             List<QuestionMediaDTO> mediaDTOList = answerMediaList.stream()
-                                .map(media -> {
-                                    QuestionMediaDTO mediaDTO = new QuestionMediaDTO();
-                                    BeanUtil.copyProperties(media, mediaDTO);
-                                    // 兼容字段
-                                    mediaDTO.setMaterialId(media.getId());
-                                    mediaDTO.setSortNum(0);
-                                    return mediaDTO;
+                                    .map(media -> {
+                                        QuestionMediaDTO mediaDTO = new QuestionMediaDTO();
+                                        BeanUtil.copyProperties(media, mediaDTO);
+                                        // 兼容字段
+                                        mediaDTO.setMaterialId(media.getId());
+                                        mediaDTO.setSortNum(0);
+                                        return mediaDTO;
                                     })
                                     .collect(Collectors.toList());
                             answerDTO.setMediaUrl(mediaDTOList);
@@ -978,24 +991,55 @@ public class QuestionServiceImpl implements QuestionService {
             if (!CollectionUtils.isEmpty(blankAreas)) {
                 List<QuestionBlankAreaDTO> blankAreaDTOs = new ArrayList<>();
                 for (QuestionBlankArea area : blankAreas) {
-                        QuestionBlankAreaDTO areaDTO = new QuestionBlankAreaDTO();
+                    QuestionBlankAreaDTO areaDTO = new QuestionBlankAreaDTO();
                     BeanUtil.copyProperties(area, areaDTO);
-                    
+
                     // 获取并转换该空位区域的答案列表
-                    List<QuestionAnswer> blankAnswers = questionAnswerBiz.getAnswersByBlankAreaId(area.getQuestionId(), area.getId());
+                    List<QuestionAnswer> blankAnswers = questionAnswerBiz.getAnswersByBlankAreaId(area.getQuestionId(),
+                            area.getId());
                     if (!CollectionUtils.isEmpty(blankAnswers)) {
                         List<QuestionAnswerDTO> blankAnswerDTOs = blankAnswers.stream()
                                 .map(answer -> {
                                     QuestionAnswerDTO answerDTO = new QuestionAnswerDTO();
                                     BeanUtil.copyProperties(answer, answerDTO);
                                     return answerDTO;
-                    })
-                    .collect(Collectors.toList());
+                                })
+                                .collect(Collectors.toList());
                         areaDTO.setAnswers(blankAnswerDTOs);
                     }
                     blankAreaDTOs.add(areaDTO);
                 }
-            dto.setBlankAreas(blankAreaDTOs);
+                dto.setBlankAreas(blankAreaDTOs);
+            }
+        }
+
+        // 填空题：从 answer 字段解析 blankAnswers
+        if (Objects.equals(question.getType(), QuestionTypeEnum.FILL_BLANK.getValue())) {
+            if (question.getAnswer() != null && !question.getAnswer().isEmpty()) {
+                dto.setBlankAnswers(Arrays.asList(question.getAnswer().split("[,，;；]")));
+            } else {
+                dto.setBlankAnswers(new ArrayList<>());
+            }
+        }
+
+        // 作文题：设置额外字段
+        if (Objects.equals(question.getType(), QuestionTypeEnum.ESSAY.getValue())) {
+            dto.setWordLimit(question.getWordLimit());
+            dto.setSampleAnswer(question.getSampleAnswer());
+            // requirements 字段是 JSON 数组格式存储
+            if (question.getRequirements() != null && !question.getRequirements().isEmpty()) {
+                try {
+                    // 尝试解析 JSON 数组
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    List<String> reqList = mapper.readValue(question.getRequirements(),
+                            mapper.getTypeFactory().constructCollectionType(List.class, String.class));
+                    dto.setRequirements(reqList);
+                } catch (Exception e) {
+                    // 解析失败则作为单个字符串处理
+                    dto.setRequirements(Arrays.asList(question.getRequirements()));
+                }
+            } else {
+                dto.setRequirements(new ArrayList<>());
             }
         }
 
@@ -1044,6 +1088,33 @@ public class QuestionServiceImpl implements QuestionService {
             question.setBlankAreas(blankAreas);
         }
 
+        // 填空题：将 blankAnswers 转换为逗号分隔的 answer
+        if (Objects.equals(questionBO.getType(), QuestionTypeEnum.FILL_BLANK.getValue())) {
+            if (questionBO.getBlankAnswers() != null && !questionBO.getBlankAnswers().isEmpty()) {
+                question.setAnswer(String.join(",", questionBO.getBlankAnswers()));
+            }
+        }
+
+        // 作文题：处理额外字段
+        if (Objects.equals(questionBO.getType(), QuestionTypeEnum.ESSAY.getValue())) {
+            question.setWordLimit(questionBO.getWordLimit());
+            question.setSampleAnswer(questionBO.getSampleAnswer());
+            // requirements 转换为 JSON 数组存储
+            if (questionBO.getRequirements() != null && !questionBO.getRequirements().isEmpty()) {
+                try {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    question.setRequirements(mapper.writeValueAsString(questionBO.getRequirements()));
+                } catch (Exception e) {
+                    // 序列化失败则使用逗号分隔
+                    question.setRequirements(String.join(",", questionBO.getRequirements()));
+                }
+            }
+            // 作文题的答案就是参考范文
+            if (questionBO.getSampleAnswer() != null) {
+                question.setAnswer(questionBO.getSampleAnswer());
+            }
+        }
+
         return question;
     }
-} 
+}

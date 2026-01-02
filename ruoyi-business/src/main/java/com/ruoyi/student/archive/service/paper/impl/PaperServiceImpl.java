@@ -12,6 +12,7 @@ import com.ruoyi.student.archive.domain.dto.paper.PaperDTO;
 import com.ruoyi.student.archive.domain.dto.paper.PaperQuestionDTO;
 import com.ruoyi.student.archive.domain.dto.paper.PaperVolumeDTO;
 import com.ruoyi.student.archive.domain.dto.paper.PaperSectionDTO;
+import com.ruoyi.student.archive.domain.dto.paper.PaperQuestionGroupDTO;
 import com.ruoyi.student.archive.domain.paper.Paper;
 import com.ruoyi.student.archive.domain.paper.PaperQuestion;
 import com.ruoyi.student.archive.domain.paper.PaperVolume;
@@ -21,7 +22,9 @@ import com.ruoyi.student.archive.service.paper.IPaperService;
 import com.ruoyi.student.archive.service.paper.IPaperVolumeService;
 import com.ruoyi.student.archive.service.paper.IPaperSectionService;
 import com.ruoyi.student.archive.service.paper.IPaperIntermissionService;
+import com.ruoyi.student.archive.service.paper.IPaperQuestionGroupService;
 import com.ruoyi.student.archive.service.paper.IPackageTaskService;
+import com.ruoyi.student.archive.domain.paper.PaperQuestionGroup;
 import com.ruoyi.student.archive.service.question.QuestionService;
 import com.ruoyi.student.archive.domain.bo.question.QuestionIdBO;
 import com.ruoyi.student.archive.domain.dto.question.QuestionInfoDTO;
@@ -63,6 +66,7 @@ public class PaperServiceImpl implements IPaperService {
     private final IPaperIntermissionService intermissionService;
     private final QuestionService questionService;
     private final IPackageTaskService packageTaskService;
+    private final IPaperQuestionGroupService questionGroupService;
     private final ApplicationContext applicationContext;
 
     @Override
@@ -345,6 +349,8 @@ public class PaperServiceImpl implements IPaperService {
             return new ArrayList<>();
         }
 
+        log.info("listByIds 查询试卷，请求的ID列表: {}", ids);
+
         // 使用LambdaQueryWrapper查询多个ID
         LambdaQueryWrapper<Paper> wrapper = new LambdaQueryWrapper<>();
         wrapper.in(Paper::getId, ids);
@@ -352,6 +358,15 @@ public class PaperServiceImpl implements IPaperService {
         wrapper.orderByDesc(Paper::getCreateTime);
 
         List<Paper> papers = paperBiz.list(wrapper);
+        log.info("listByIds 查询结果，找到 {} 条试卷记录", papers.size());
+        for (Paper p : papers) {
+            log.info("  - 试卷: id={}, name={}, status={}, delFlag={}, packageHash={}",
+                    p.getId(), p.getPaperName(), p.getStatus(), p.getDelFlag(),
+                    p.getPackageHash() != null
+                            ? p.getPackageHash().substring(0, Math.min(8, p.getPackageHash().length())) + "..."
+                            : "null");
+        }
+
         return papers.stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
@@ -377,7 +392,7 @@ public class PaperServiceImpl implements IPaperService {
         // 注意：必须通过代理对象调用，否则 @Async 注解不会生效
         PaperServiceImpl proxy = applicationContext.getBean(PaperServiceImpl.class);
         proxy.executeGeneratePackageAsync(paperId);
-        
+
         // 方法立即返回，不等待异步任务完成
     }
 
@@ -443,29 +458,30 @@ public class PaperServiceImpl implements IPaperService {
             packageTaskService.updateProgress(paperId, 70, "正在上传快速启动包到OSS...");
             Integer newVersion = (paper.getVersion() != null ? paper.getVersion() : 0) + 1;
             String quickStartFileName = buildQuickStartPackageFileName(paper.getPaperCode(), newVersion);
-            
-            log.info("准备上传快速启动包到OSS，试卷ID：{}，文件名：{}，版本：{}，文件大小：{} MB", 
+
+            log.info("准备上传快速启动包到OSS，试卷ID：{}，文件名：{}，版本：{}，文件大小：{} MB",
                     paperId, quickStartFileName, newVersion, quickStartSize / 1024.0 / 1024.0);
 
             String quickStartUrl;
             try {
                 java.io.InputStream quickStartInputStream = new java.io.ByteArrayInputStream(quickStartBytes);
-                com.ruoyi.common.utils.oss.IOssService.UploadResult quickStartUploadResult = ossUtil.uploadMultipartWithResume(
-                        quickStartInputStream,
-                        quickStartFileName,
-                        "application/zip",
-                        quickStartSize,
-                        null, // 快速启动包通常较小，不需要分片
-                        null,
-                        null,
-                        (uploaded, total) -> {
-                            if (total > 0) {
-                                int uploadProgress = (int) (70 + (uploaded * 5.0 / total)); // 70-75%用于快速启动包上传
-                                packageTaskService.updateProgress(paperId, uploadProgress, 
-                                        String.format("正在上传快速启动包... (%d KB / %d KB)", 
-                                                uploaded / 1024, total / 1024));
-                            }
-                        });
+                com.ruoyi.common.utils.oss.IOssService.UploadResult quickStartUploadResult = ossUtil
+                        .uploadMultipartWithResume(
+                                quickStartInputStream,
+                                quickStartFileName,
+                                "application/zip",
+                                quickStartSize,
+                                null, // 快速启动包通常较小，不需要分片
+                                null,
+                                null,
+                                (uploaded, total) -> {
+                                    if (total > 0) {
+                                        int uploadProgress = (int) (70 + (uploaded * 5.0 / total)); // 70-75%用于快速启动包上传
+                                        packageTaskService.updateProgress(paperId, uploadProgress,
+                                                String.format("正在上传快速启动包... (%d KB / %d KB)",
+                                                        uploaded / 1024, total / 1024));
+                                    }
+                                });
                 quickStartUrl = quickStartUploadResult.getFileUrl();
                 log.info("快速启动包上传成功，试卷ID：{}，URL：{}", paperId, quickStartUrl);
             } catch (Exception e) {
@@ -478,7 +494,7 @@ public class PaperServiceImpl implements IPaperService {
             packageTaskService.updateProgress(paperId, 80, "正在上传完整试卷包到OSS...");
             String packageFileName = buildPackageFileName(paper.getPaperCode(), newVersion);
 
-            log.info("准备上传完整试卷包到OSS，试卷ID：{}，文件名：{}，版本：{}，文件大小：{} MB", 
+            log.info("准备上传完整试卷包到OSS，试卷ID：{}，文件名：{}，版本：{}，文件大小：{} MB",
                     paperId, packageFileName, newVersion, packageSize / 1024.0 / 1024.0);
 
             String packageUrl;
@@ -490,25 +506,25 @@ public class PaperServiceImpl implements IPaperService {
                 java.util.List<com.ruoyi.common.utils.oss.IOssService.PartInfo> existingUploadedParts = null;
                 Long existingChunkSize = null;
                 boolean isResume = false;
-                
-                if (taskInfo != null && taskInfo.getUploadId() != null && !taskInfo.getUploadId().isEmpty() 
+
+                if (taskInfo != null && taskInfo.getUploadId() != null && !taskInfo.getUploadId().isEmpty()
                         && taskInfo.getObjectKey() != null && taskInfo.getObjectKey().equals(packageFileName)) {
                     // 检查上传状态是否有效（确保是同一个文件）
                     try {
                         // 查询OSS上已上传的分片
-                        java.util.List<com.ruoyi.common.utils.oss.IOssService.PartInfo> ossParts = 
-                                ossUtil.listUploadedParts(packageFileName, taskInfo.getUploadId());
+                        java.util.List<com.ruoyi.common.utils.oss.IOssService.PartInfo> ossParts = ossUtil
+                                .listUploadedParts(packageFileName, taskInfo.getUploadId());
                         if (ossParts != null && !ossParts.isEmpty()) {
                             // 有未完成的上传，使用断点续传
                             existingUploadId = taskInfo.getUploadId();
                             existingUploadedParts = ossParts;
                             existingChunkSize = taskInfo.getChunkSize();
                             isResume = true;
-                            log.info("检测到未完成的上传任务，使用断点续传。试卷ID：{}，UploadId：{}，已上传分片数：{}", 
+                            log.info("检测到未完成的上传任务，使用断点续传。试卷ID：{}，UploadId：{}，已上传分片数：{}",
                                     paperId, existingUploadId, existingUploadedParts.size());
                         } else {
                             // OSS上没有分片，清除本地状态，重新上传
-                            log.warn("OSS上未找到已上传的分片，清除本地状态，重新上传。试卷ID：{}，UploadId：{}", 
+                            log.warn("OSS上未找到已上传的分片，清除本地状态，重新上传。试卷ID：{}，UploadId：{}",
                                     paperId, taskInfo.getUploadId());
                             taskInfo.setUploadId(null);
                             taskInfo.setObjectKey(null);
@@ -529,7 +545,7 @@ public class PaperServiceImpl implements IPaperService {
                     }
                 } else if (taskInfo != null && taskInfo.getUploadId() != null && !taskInfo.getUploadId().isEmpty()) {
                     // 有uploadId但objectKey不匹配，说明是不同文件的上传，清除状态
-                    log.warn("检测到不同文件的上传任务，清除旧状态，重新上传。试卷ID：{}，旧objectKey：{}，新objectKey：{}", 
+                    log.warn("检测到不同文件的上传任务，清除旧状态，重新上传。试卷ID：{}，旧objectKey：{}，新objectKey：{}",
                             paperId, taskInfo.getObjectKey(), packageFileName);
                     taskInfo.setUploadId(null);
                     taskInfo.setObjectKey(null);
@@ -538,22 +554,22 @@ public class PaperServiceImpl implements IPaperService {
                     taskInfo.setChunkSize(null);
                     packageTaskService.saveTask(paperId, taskInfo);
                 }
-                
+
                 // 使用分片上传（支持断点续传）
                 java.io.InputStream zipInputStream = new java.io.ByteArrayInputStream(zipBytes);
                 // 分片大小设为null，让OSS服务根据文件大小自动优化（如果续传，使用之前的分片大小）
                 Long chunkSize = isResume ? existingChunkSize : null;
-                
+
                 // 进度回调：更新任务进度，并保存上传状态
                 java.util.function.BiConsumer<Long, Long> progressCallback = (uploaded, total) -> {
                     if (total > 0) {
                         int uploadProgress = (int) (80 + (uploaded * 10.0 / total)); // 80-90%用于完整包上传
-                        String stepMsg = String.format("正在上传完整试卷包到OSS... (%d MB / %d MB)", 
+                        String stepMsg = String.format("正在上传完整试卷包到OSS... (%d MB / %d MB)",
                                 uploaded / 1024 / 1024, total / 1024 / 1024);
                         packageTaskService.updateProgress(paperId, uploadProgress, stepMsg);
                     }
                 };
-                
+
                 // 使用支持断点续传的上传方法
                 com.ruoyi.common.utils.oss.IOssService.UploadResult uploadResult;
                 try {
@@ -566,9 +582,9 @@ public class PaperServiceImpl implements IPaperService {
                             existingUploadId,
                             existingUploadedParts,
                             progressCallback);
-                    
+
                     packageUrl = uploadResult.getFileUrl();
-                    
+
                     // 上传成功，保存上传状态（用于后续可能的续传，直到任务完成）
                     if (taskInfo != null) {
                         taskInfo.setUploadId(uploadResult.getUploadId());
@@ -576,7 +592,8 @@ public class PaperServiceImpl implements IPaperService {
                         // 将已上传分片列表转换为JSON字符串保存
                         if (uploadResult.getUploadedParts() != null && !uploadResult.getUploadedParts().isEmpty()) {
                             java.util.List<java.util.Map<String, Object>> partsJson = new java.util.ArrayList<>();
-                            for (com.ruoyi.common.utils.oss.IOssService.PartInfo part : uploadResult.getUploadedParts()) {
+                            for (com.ruoyi.common.utils.oss.IOssService.PartInfo part : uploadResult
+                                    .getUploadedParts()) {
                                 java.util.Map<String, Object> partMap = new java.util.HashMap<>();
                                 partMap.put("partNumber", part.getPartNumber());
                                 partMap.put("eTag", part.getETag());
@@ -586,10 +603,11 @@ public class PaperServiceImpl implements IPaperService {
                             taskInfo.setUploadedParts(com.alibaba.fastjson2.JSON.toJSONString(partsJson));
                         }
                         taskInfo.setFileSize(packageSize);
-                        taskInfo.setChunkSize(chunkSize != null ? chunkSize : 
-                                (packageSize < 50L * 1024 * 1024 ? 10L * 1024 * 1024 : 
-                                 packageSize < 200L * 1024 * 1024 ? 20L * 1024 * 1024 :
-                                 packageSize < 500L * 1024 * 1024 ? 50L * 1024 * 1024 : 100L * 1024 * 1024));
+                        taskInfo.setChunkSize(chunkSize != null ? chunkSize
+                                : (packageSize < 50L * 1024 * 1024 ? 10L * 1024 * 1024
+                                        : packageSize < 200L * 1024 * 1024 ? 20L * 1024 * 1024
+                                                : packageSize < 500L * 1024 * 1024 ? 50L * 1024 * 1024
+                                                        : 100L * 1024 * 1024));
                         packageTaskService.saveTask(paperId, taskInfo);
                     }
                 } catch (Exception uploadEx) {
@@ -599,10 +617,11 @@ public class PaperServiceImpl implements IPaperService {
                         taskInfo.setUploadId(existingUploadId);
                         taskInfo.setObjectKey(packageFileName);
                         taskInfo.setFileSize(packageSize);
-                        taskInfo.setChunkSize(chunkSize != null ? chunkSize : 
-                                (packageSize < 50L * 1024 * 1024 ? 10L * 1024 * 1024 : 
-                                 packageSize < 200L * 1024 * 1024 ? 20L * 1024 * 1024 :
-                                 packageSize < 500L * 1024 * 1024 ? 50L * 1024 * 1024 : 100L * 1024 * 1024));
+                        taskInfo.setChunkSize(chunkSize != null ? chunkSize
+                                : (packageSize < 50L * 1024 * 1024 ? 10L * 1024 * 1024
+                                        : packageSize < 200L * 1024 * 1024 ? 20L * 1024 * 1024
+                                                : packageSize < 500L * 1024 * 1024 ? 50L * 1024 * 1024
+                                                        : 100L * 1024 * 1024));
                         // 保存已上传的分片（如果有）
                         if (existingUploadedParts != null && !existingUploadedParts.isEmpty()) {
                             java.util.List<java.util.Map<String, Object>> partsJson = new java.util.ArrayList<>();
@@ -619,8 +638,8 @@ public class PaperServiceImpl implements IPaperService {
                     }
                     throw uploadEx;
                 }
-                
-                log.info("试卷包已上传到OSS，试卷ID：{}，URL：{}，是否续传：{}", 
+
+                log.info("试卷包已上传到OSS，试卷ID：{}，URL：{}，是否续传：{}",
                         paperId, packageUrl, isResume);
                 packageTaskService.updateProgress(paperId, 85, "ZIP包上传完成，正在验证...");
             } catch (Exception e) {
@@ -628,7 +647,8 @@ public class PaperServiceImpl implements IPaperService {
                 // 上传失败时不清除上传状态，允许后续续传
                 // 但需要更新错误信息和保存当前上传状态
                 // 注意：taskInfo 已在 try 块中定义，这里直接使用或重新获取
-                com.ruoyi.student.archive.domain.dto.paper.PackageTaskInfo errorTaskInfo = packageTaskService.getTask(paperId);
+                com.ruoyi.student.archive.domain.dto.paper.PackageTaskInfo errorTaskInfo = packageTaskService
+                        .getTask(paperId);
                 if (errorTaskInfo != null) {
                     errorTaskInfo.setErrorMessage("上传失败：" + e.getMessage());
                     // 如果使用了断点续传，保存当前的上传状态（uploadId等）
@@ -699,9 +719,10 @@ public class PaperServiceImpl implements IPaperService {
 
             // 13. 完成（100%）
             packageTaskService.updateSuccess(paperId, newVersion);
-            
+
             // 清除上传状态（任务完成，不再需要续传）
-            com.ruoyi.student.archive.domain.dto.paper.PackageTaskInfo finalTaskInfo = packageTaskService.getTask(paperId);
+            com.ruoyi.student.archive.domain.dto.paper.PackageTaskInfo finalTaskInfo = packageTaskService
+                    .getTask(paperId);
             if (finalTaskInfo != null) {
                 finalTaskInfo.setUploadId(null);
                 finalTaskInfo.setObjectKey(null);
@@ -1014,6 +1035,11 @@ public class PaperServiceImpl implements IPaperService {
      */
     private String generatePaperName(Integer year, Integer month, String province,
             String paperType, String customName) {
+        // 优化：如果有自定义名称，直接使用自定义名称（不自动拼接年份、省份、类型）
+        if (StringUtils.isNotEmpty(customName)) {
+            return customName;
+        }
+
         StringBuilder name = new StringBuilder();
 
         // 年份（必填）
@@ -1161,8 +1187,8 @@ public class PaperServiceImpl implements IPaperService {
                         if (sectionBO.getQuestions() != null && !sectionBO.getQuestions().isEmpty()) {
                             totalQuestions += sectionBO.getQuestions().size();
                             for (QuestionDataBO question : sectionBO.getQuestions()) {
-                        if (question.getScore() != null) {
-                            totalScore = totalScore.add(question.getScore());
+                                if (question.getScore() != null) {
+                                    totalScore = totalScore.add(question.getScore());
                                 }
                             }
                         }
@@ -1179,17 +1205,31 @@ public class PaperServiceImpl implements IPaperService {
             paper.setTotalQuestions(totalQuestions);
         }
 
+        // 设置数据来源标识：如果没有传递 remark，默认为手动创建
+        if (StringUtils.isEmpty(paper.getRemark())) {
+            paper.setRemark("manual");
+        }
+
+        // 清洗试卷音频/图片 URL（去掉签名参数，只保留干净的 URL）
+        paper.setIntroAudioUrl(com.ruoyi.common.utils.oss.exam.question.OssUtil.cleanOssUrl(paper.getIntroAudioUrl()));
+        paper.setTrialListenAudioUrl(
+                com.ruoyi.common.utils.oss.exam.question.OssUtil.cleanOssUrl(paper.getTrialListenAudioUrl()));
+        paper.setTrialIntroAudioUrl(
+                com.ruoyi.common.utils.oss.exam.question.OssUtil.cleanOssUrl(paper.getTrialIntroAudioUrl()));
+        paper.setOperateListenImageUrl(
+                com.ruoyi.common.utils.oss.exam.question.OssUtil.cleanOssUrl(paper.getOperateListenImageUrl()));
+
         Integer paperId = paperBiz.createPaper(paper);
 
         // 2. 创建卷别、大题和题目（层级嵌套结构）
         // 构建临时ID到真实ID的映射，用于中场配置关联
         Map<String, Integer> volumeIdMap = new HashMap<>();
-        
+
         if (fullDataBO.getVolumes() != null && !fullDataBO.getVolumes().isEmpty()) {
             log.info("开始创建卷别 - 数量: {}", fullDataBO.getVolumes().size());
             List<PaperQuestion> allPaperQuestions = new ArrayList<>();
             int questionSortOrder = 1;
-            
+
             for (VolumeDataBO volumeBO : fullDataBO.getVolumes()) {
                 PaperVolume volume = new PaperVolume();
                 BeanUtils.copyProperties(volumeBO, volume);
@@ -1201,10 +1241,14 @@ public class PaperServiceImpl implements IPaperService {
                     volume.setVolumeCode(String.valueOf((char) ('A' + order - 1)));
                 }
 
+                // 清洗卷别音频 URL
+                volume.setVolumeAudioUrl(
+                        com.ruoyi.common.utils.oss.exam.question.OssUtil.cleanOssUrl(volume.getVolumeAudioUrl()));
+
                 // 单个保存以确保获取ID
                 volumeService.saveVolume(volume);
                 Integer volumeId = volume.getId(); // 获取保存后的实际ID
-                
+
                 // 如果前端提供了临时ID，建立映射关系
                 if (volumeBO.getTempId() != null) {
                     volumeIdMap.put(volumeBO.getTempId(), volumeId);
@@ -1215,47 +1259,88 @@ public class PaperServiceImpl implements IPaperService {
                 if (volumeBO.getSections() != null && !volumeBO.getSections().isEmpty()) {
                     log.info("开始创建卷别 {} 下的大题 - 数量: {}", volumeId, volumeBO.getSections().size());
                     for (SectionDataBO sectionBO : volumeBO.getSections()) {
-                PaperSection section = new PaperSection();
-                BeanUtils.copyProperties(sectionBO, section);
-                section.setPaperId(paperId);
+                        PaperSection section = new PaperSection();
+                        BeanUtils.copyProperties(sectionBO, section);
+                        section.setPaperId(paperId);
                         section.setVolumeId(volumeId); // 直接使用刚保存的卷别ID
+                        section.setVolumeCode(volume.getVolumeCode()); // 设置卷别代码
 
-                // 单个保存以确保获取ID
-                sectionService.saveSection(section);
+                        // 清洗大题音频 URL
+                        section.setInstructionAudioUrl(com.ruoyi.common.utils.oss.exam.question.OssUtil
+                                .cleanOssUrl(section.getInstructionAudioUrl()));
+
+                        // 单个保存以确保获取ID
+                        sectionService.saveSection(section);
                         Integer sectionId = section.getId(); // 获取保存后的实际ID
 
                         // 处理该大题下的题目（嵌套结构）
                         if (sectionBO.getQuestions() != null && !sectionBO.getQuestions().isEmpty()) {
                             log.info("开始创建大题 {} 下的题目 - 数量: {}", sectionId, sectionBO.getQuestions().size());
                             for (QuestionDataBO questionBO : sectionBO.getQuestions()) {
-                    PaperQuestion pq = new PaperQuestion();
-                    pq.setPaperId(paperId);
-                    pq.setQuestionId(questionBO.getQuestionId());
+                                PaperQuestion pq = new PaperQuestion();
+                                pq.setPaperId(paperId);
+                                pq.setQuestionId(questionBO.getQuestionId());
                                 pq.setSectionId(sectionId); // 直接使用刚保存的大题ID
                                 pq.setSectionOrder(questionBO.getSectionOrder());
                                 pq.setScore(questionBO.getScore());
                                 pq.setSortOrder(questionSortOrder++); // 设置排序号
                                 pq.setCreateTime(new Date());
-                                
+
                                 allPaperQuestions.add(pq);
                             }
                             log.info("大题 {} 下的题目创建完成", sectionId);
+                        }
+
+                        // 处理该大题下的题目组（分组题目，用于共享音频）
+                        if (sectionBO.getQuestionGroups() != null && !sectionBO.getQuestionGroups().isEmpty()) {
+                            log.info("开始创建大题 {} 下的题目组 - 数量: {}", sectionId, sectionBO.getQuestionGroups().size());
+                            for (PaperQuestionGroupBO groupBO : sectionBO.getQuestionGroups()) {
+                                PaperQuestionGroup group = new PaperQuestionGroup();
+                                group.setSectionId(sectionId);
+                                group.setQuestionGroupId(groupBO.getQuestionGroupId()); // 关联题库题目组ID
+                                group.setGroupOrder(groupBO.getGroupOrder());
+                                group.setStartQuestionNum(groupBO.getStartQuestionNum());
+                                group.setEndQuestionNum(groupBO.getEndQuestionNum());
+                                group.setAudioUrl(groupBO.getAudioUrl());
+                                group.setAudioPath(groupBO.getAudioPath());
+                                group.setAudioDuration(groupBO.getAudioDuration());
+                                group.setAudioDuration(groupBO.getAudioDuration());
+                                group.setIntroText(groupBO.getIntroText());
+                                group.setGroupName(groupBO.getGroupName());
+                                group.setAnswerTime(groupBO.getAnswerTime());
+
+                                // 清洗题目组音频 URL
+                                group.setAudioUrl(com.ruoyi.common.utils.oss.exam.question.OssUtil
+                                        .cleanOssUrl(group.getAudioUrl()));
+
+                                // 将选中的题目ID列表转为JSON字符串
+                                if (groupBO.getSelectedQuestionIds() != null
+                                        && !groupBO.getSelectedQuestionIds().isEmpty()) {
+                                    group.setSelectedQuestionIds(
+                                            com.alibaba.fastjson2.JSON.toJSONString(groupBO.getSelectedQuestionIds()));
+                                }
+
+                                questionGroupService.saveGroup(group);
+                                log.debug("创建题目组: {}-{}, audioUrl={}",
+                                        group.getStartQuestionNum(), group.getEndQuestionNum(), group.getAudioUrl());
+                            }
+                            log.info("大题 {} 下的题目组创建完成", sectionId);
                         }
                     }
                     log.info("卷别 {} 下的大题创建完成", volumeId);
                 }
             }
-            
+
             // 批量保存所有题目关联
             if (!allPaperQuestions.isEmpty()) {
                 paperQuestionBiz.batchInsert(allPaperQuestions);
                 log.info("创建题目关联成功 - 试卷ID: {}, 题目数量: {}", paperId, allPaperQuestions.size());
-            // 更新题目总数
-            updateTotalQuestions(paperId);
-        } else {
-            log.info("前端未提交任何题目数据 - 试卷ID: {}", paperId);
+                // 更新题目总数
+                updateTotalQuestions(paperId);
+            } else {
+                log.info("前端未提交任何题目数据 - 试卷ID: {}", paperId);
             }
-            
+
             log.info("卷别创建完成");
         }
 
@@ -1267,13 +1352,15 @@ public class PaperServiceImpl implements IPaperService {
                 PaperIntermission intermission = new PaperIntermission();
                 intermission.setPaperId(paperId);
                 intermission.setIntermissionText(intermissionBO.getIntermissionText());
-                intermission.setIntermissionAudioUrl(intermissionBO.getIntermissionAudioUrl());
+                // 清洗中场音频 URL
+                intermission.setIntermissionAudioUrl(com.ruoyi.common.utils.oss.exam.question.OssUtil
+                        .cleanOssUrl(intermissionBO.getIntermissionAudioUrl()));
                 intermission.setIntermissionAudioPath(intermissionBO.getIntermissionAudioPath());
                 intermission.setIntermissionAudioDuration(intermissionBO.getIntermissionAudioDuration());
                 intermission.setCanSkip(intermissionBO.getCanSkip() != null ? intermissionBO.getCanSkip() : 0);
                 intermission.setFromVolume(intermissionBO.getFromVolume()); // 保留用于显示
                 intermission.setToVolume(intermissionBO.getToVolume()); // 保留用于显示
-                
+
                 // 处理 fromVolumeId：优先使用真实ID，如果没有则通过 tempId 查找
                 Integer fromVolumeId = intermissionBO.getFromVolumeId();
                 if (fromVolumeId == null && intermissionBO.getFromVolumeTempId() != null) {
@@ -1285,7 +1372,7 @@ public class PaperServiceImpl implements IPaperService {
                     }
                 }
                 intermission.setFromVolumeId(fromVolumeId);
-                
+
                 // 处理 toVolumeId：优先使用真实ID，如果没有则通过 tempId 查找
                 Integer toVolumeId = intermissionBO.getToVolumeId();
                 if (toVolumeId == null && intermissionBO.getToVolumeTempId() != null) {
@@ -1297,7 +1384,7 @@ public class PaperServiceImpl implements IPaperService {
                     }
                 }
                 intermission.setToVolumeId(toVolumeId);
-                
+
                 intermissions.add(intermission);
             }
 
@@ -1339,15 +1426,19 @@ public class PaperServiceImpl implements IPaperService {
         paperQuestionBiz.deleteByPaperId(paperId);
         log.info("删除旧题目关联 - 试卷ID: {}", paperId);
 
-        // 1.2 删除大题
+        // 1.2 删除题目组（必须在删除大题之前）
+        questionGroupService.deleteByPaperId(paperId);
+        log.info("删除旧题目组 - 试卷ID: {}", paperId);
+
+        // 1.3 删除大题
         sectionService.deleteByPaperId(paperId);
         log.info("删除旧大题 - 试卷ID: {}", paperId);
 
-        // 1.3 删除卷别
+        // 1.4 删除卷别
         volumeService.deleteByPaperId(paperId);
         log.info("删除旧卷别 - 试卷ID: {}", paperId);
 
-        // 1.4 删除中场配置
+        // 1.5 删除中场配置
         intermissionService.deleteByPaperId(paperId);
 
         log.info("删除旧中场配置 - 试卷ID: {}", paperId);
@@ -1368,8 +1459,8 @@ public class PaperServiceImpl implements IPaperService {
                         if (sectionBO.getQuestions() != null && !sectionBO.getQuestions().isEmpty()) {
                             totalQuestions += sectionBO.getQuestions().size();
                             for (QuestionDataBO question : sectionBO.getQuestions()) {
-                        if (question.getScore() != null) {
-                            totalScore = totalScore.add(question.getScore());
+                                if (question.getScore() != null) {
+                                    totalScore = totalScore.add(question.getScore());
                                 }
                             }
                         }
@@ -1403,12 +1494,12 @@ public class PaperServiceImpl implements IPaperService {
         // 3. 创建新数据（层级嵌套结构：volumes -> sections -> questions）
         // 构建临时ID到真实ID的映射，用于中场配置关联
         Map<String, Integer> volumeIdMap = new HashMap<>();
-        
+
         if (fullDataBO.getVolumes() != null && !fullDataBO.getVolumes().isEmpty()) {
             log.info("开始创建卷别 - 数量: {}", fullDataBO.getVolumes().size());
             List<PaperQuestion> allPaperQuestions = new ArrayList<>();
             int questionSortOrder = 1;
-            
+
             for (VolumeDataBO volumeBO : fullDataBO.getVolumes()) {
                 PaperVolume volume = new PaperVolume();
                 BeanUtils.copyProperties(volumeBO, volume);
@@ -1424,7 +1515,7 @@ public class PaperServiceImpl implements IPaperService {
                 // 单个保存以确保获取ID
                 volumeService.saveVolume(volume);
                 Integer volumeId = volume.getId(); // 获取保存后的实际ID
-                
+
                 // 如果前端提供了临时ID，建立映射关系
                 if (volumeBO.getTempId() != null) {
                     volumeIdMap.put(volumeBO.getTempId(), volumeId);
@@ -1435,48 +1526,79 @@ public class PaperServiceImpl implements IPaperService {
                 if (volumeBO.getSections() != null && !volumeBO.getSections().isEmpty()) {
                     log.info("开始创建卷别 {} 下的大题 - 数量: {}", volumeId, volumeBO.getSections().size());
                     for (SectionDataBO sectionBO : volumeBO.getSections()) {
-                PaperSection section = new PaperSection();
-                BeanUtils.copyProperties(sectionBO, section);
-                section.setPaperId(paperId);
-                section.setId(null); // 确保是新增
+                        PaperSection section = new PaperSection();
+                        BeanUtils.copyProperties(sectionBO, section);
+                        section.setPaperId(paperId);
+                        section.setId(null); // 确保是新增
                         section.setVolumeId(volumeId); // 直接使用刚保存的卷别ID
+                        section.setVolumeCode(volume.getVolumeCode()); // 设置卷别代码
 
-                // 单个保存以确保获取ID
-                sectionService.saveSection(section);
+                        // 单个保存以确保获取ID
+                        sectionService.saveSection(section);
                         Integer sectionId = section.getId(); // 获取保存后的实际ID
 
                         // 处理该大题下的题目（嵌套结构）
                         if (sectionBO.getQuestions() != null && !sectionBO.getQuestions().isEmpty()) {
                             log.info("开始创建大题 {} 下的题目 - 数量: {}", sectionId, sectionBO.getQuestions().size());
                             for (QuestionDataBO questionBO : sectionBO.getQuestions()) {
-                    PaperQuestion pq = new PaperQuestion();
-                    pq.setPaperId(paperId);
-                    pq.setQuestionId(questionBO.getQuestionId());
+                                PaperQuestion pq = new PaperQuestion();
+                                pq.setPaperId(paperId);
+                                pq.setQuestionId(questionBO.getQuestionId());
                                 pq.setSectionId(sectionId); // 直接使用刚保存的大题ID
                                 pq.setSectionOrder(questionBO.getSectionOrder());
                                 pq.setScore(questionBO.getScore());
                                 pq.setSortOrder(questionSortOrder++); // 设置排序号
                                 pq.setCreateTime(new Date());
-                                
+
                                 allPaperQuestions.add(pq);
                             }
                             log.info("大题 {} 下的题目创建完成", sectionId);
+                        }
+
+                        // 处理该大题下的题目组（嵌套结构）
+                        if (sectionBO.getQuestionGroups() != null && !sectionBO.getQuestionGroups().isEmpty()) {
+                            log.info("开始创建大题 {} 下的题目组 - 数量: {}", sectionId, sectionBO.getQuestionGroups().size());
+                            for (PaperQuestionGroupBO groupBO : sectionBO.getQuestionGroups()) {
+                                PaperQuestionGroup group = new PaperQuestionGroup();
+                                group.setSectionId(sectionId);
+                                group.setQuestionGroupId(groupBO.getQuestionGroupId()); // 关联题库题目组ID
+                                group.setGroupOrder(groupBO.getGroupOrder());
+                                group.setAudioUrl(groupBO.getAudioUrl());
+                                group.setAudioPath(groupBO.getAudioPath());
+                                group.setAudioDuration(groupBO.getAudioDuration());
+                                group.setIntroText(groupBO.getIntroText());
+                                group.setGroupName(groupBO.getGroupName());
+                                group.setAnswerTime(groupBO.getAnswerTime());
+                                // 将 List<Integer> 转换为 JSON 字符串存储
+                                log.info("准备保存题目组: id={}, selectedQuestionIds={}", groupBO.getId(),
+                                        groupBO.getSelectedQuestionIds());
+                                if (groupBO.getSelectedQuestionIds() != null
+                                        && !groupBO.getSelectedQuestionIds().isEmpty()) {
+                                    String jsonIds = groupBO.getSelectedQuestionIds().toString();
+                                    group.setSelectedQuestionIds(jsonIds);
+                                    log.info("题目组 selectedQuestionIds 已转换并设置: {}", jsonIds);
+                                } else {
+                                    log.info("题目组 selectedQuestionIds 为空，跳过设置");
+                                }
+                                questionGroupService.saveGroup(group);
+                            }
+                            log.info("大题 {} 下的题目组创建完成", sectionId);
                         }
                     }
                     log.info("卷别 {} 下的大题创建完成", volumeId);
                 }
             }
-            
+
             // 批量保存所有题目关联
             if (!allPaperQuestions.isEmpty()) {
                 paperQuestionBiz.batchInsert(allPaperQuestions);
                 log.info("更新题目关联成功 - 试卷ID: {}, 题目数量: {}", paperId, allPaperQuestions.size());
-            // 更新题目总数
-            updateTotalQuestions(paperId);
-        } else {
-            log.info("前端未提交任何题目数据 - 试卷ID: {}", paperId);
+                // 更新题目总数
+                updateTotalQuestions(paperId);
+            } else {
+                log.info("前端未提交任何题目数据 - 试卷ID: {}", paperId);
             }
-            
+
             log.info("卷别创建完成");
         }
 
@@ -1494,7 +1616,7 @@ public class PaperServiceImpl implements IPaperService {
                 intermission.setCanSkip(intermissionBO.getCanSkip() != null ? intermissionBO.getCanSkip() : 0);
                 intermission.setFromVolume(intermissionBO.getFromVolume()); // 保留用于显示
                 intermission.setToVolume(intermissionBO.getToVolume()); // 保留用于显示
-                
+
                 // 处理 fromVolumeId：优先使用真实ID，如果没有则通过 tempId 查找
                 Integer fromVolumeId = intermissionBO.getFromVolumeId();
                 if (fromVolumeId == null && intermissionBO.getFromVolumeTempId() != null) {
@@ -1506,7 +1628,7 @@ public class PaperServiceImpl implements IPaperService {
                     }
                 }
                 intermission.setFromVolumeId(fromVolumeId);
-                
+
                 // 处理 toVolumeId：优先使用真实ID，如果没有则通过 tempId 查找
                 Integer toVolumeId = intermissionBO.getToVolumeId();
                 if (toVolumeId == null && intermissionBO.getToVolumeTempId() != null) {
@@ -1518,7 +1640,7 @@ public class PaperServiceImpl implements IPaperService {
                     }
                 }
                 intermission.setToVolumeId(toVolumeId);
-                
+
                 intermissions.add(intermission);
             }
 
@@ -1561,10 +1683,10 @@ public class PaperServiceImpl implements IPaperService {
                 int orderB = b.getVolumeOrder() != null ? b.getVolumeOrder() : 0;
                 return Integer.compare(orderA, orderB);
             });
-            
+
             // 批量获取所有题目ID，用于一次性查询题目详情
             Set<Integer> allQuestionIds = new HashSet<>();
-            
+
             // 遍历每个卷别，构建嵌套结构
             for (PaperVolume volume : sortedVolumes) {
                 PaperVolumeDTO volumeDTO = new PaperVolumeDTO();
@@ -1576,10 +1698,10 @@ public class PaperServiceImpl implements IPaperService {
                 volumeDTO.setVolumeAudioUrl(volume.getVolumeAudioUrl());
                 volumeDTO.setVolumeAudioPath(volume.getVolumeAudioPath());
                 volumeDTO.setVolumeAudioDuration(volume.getVolumeAudioDuration());
-                
+
                 // 根据 paperId + volumeId 查询该卷别下的大题列表（更严谨）
                 List<PaperSection> volumeSections = sectionService.listByVolumeId(volume.getId());
-                
+
                 // 构建该卷别下的大题列表
                 List<PaperSectionDTO> sectionDTOs = new ArrayList<>();
                 if (!CollectionUtils.isEmpty(volumeSections)) {
@@ -1589,7 +1711,7 @@ public class PaperServiceImpl implements IPaperService {
                         int orderB = b.getSectionOrder() != null ? b.getSectionOrder() : 0;
                         return Integer.compare(orderA, orderB);
                     });
-                    
+
                     for (PaperSection section : volumeSections) {
                         PaperSectionDTO sectionDTO = new PaperSectionDTO();
                         sectionDTO.setId(section.getId());
@@ -1606,18 +1728,18 @@ public class PaperServiceImpl implements IPaperService {
                         sectionDTO.setInstructionAudioUrl(section.getInstructionAudioUrl());
                         sectionDTO.setInstructionAudioPath(section.getInstructionAudioPath());
                         sectionDTO.setInstructionAudioDuration(section.getInstructionAudioDuration());
-                        sectionDTO.setAudioPlayCount(section.getAudioPlayCount() != null ? section.getAudioPlayCount() : 1);
+                        sectionDTO.setAudioPlayCount(
+                                section.getAudioPlayCount() != null ? section.getAudioPlayCount() : 1);
                         sectionDTO.setAnswerTime(section.getAnswerTime() != null ? section.getAnswerTime() : 5);
-                        
+
                         // 根据 paperId + sectionId 查询该大题下的题目列表（更严谨）
                         // 使用 LambdaQueryWrapper 查询
                         List<PaperQuestion> sectionQuestions = paperQuestionBiz.list(
-                            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<PaperQuestion>()
-                                .eq(PaperQuestion::getPaperId, paperId)
-                                .eq(PaperQuestion::getSectionId, section.getId())
-                                .orderByAsc(PaperQuestion::getSectionOrder)
-                        );
-                        
+                                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<PaperQuestion>()
+                                        .eq(PaperQuestion::getPaperId, paperId)
+                                        .eq(PaperQuestion::getSectionId, section.getId())
+                                        .orderByAsc(PaperQuestion::getSectionOrder));
+
                         // 收集题目ID，用于批量查询题目详情
                         if (!CollectionUtils.isEmpty(sectionQuestions)) {
                             for (PaperQuestion pq : sectionQuestions) {
@@ -1626,7 +1748,7 @@ public class PaperServiceImpl implements IPaperService {
                                 }
                             }
                         }
-                        
+
                         // 先设置为空列表，后续填充
                         sectionDTO.setQuestions(new ArrayList<>());
                         sectionDTOs.add(sectionDTO);
@@ -1635,7 +1757,7 @@ public class PaperServiceImpl implements IPaperService {
                 volumeDTO.setSections(sectionDTOs);
                 volumeDTOs.add(volumeDTO);
             }
-            
+
             // 批量获取所有题目详情（用于填充title和type）
             Map<Integer, QuestionInfoDTO> questionInfoMap = new HashMap<>();
             if (!allQuestionIds.isEmpty()) {
@@ -1652,30 +1774,29 @@ public class PaperServiceImpl implements IPaperService {
                     }
                 }
             }
-            
+
             // 填充题目详情到嵌套结构中
             for (PaperVolumeDTO volumeDTO : volumeDTOs) {
                 for (PaperSectionDTO sectionDTO : volumeDTO.getSections()) {
                     // 根据 paperId + sectionId 查询该大题下的题目列表
                     List<PaperQuestion> sectionQuestions = paperQuestionBiz.list(
-                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<PaperQuestion>()
-                            .eq(PaperQuestion::getPaperId, paperId)
-                            .eq(PaperQuestion::getSectionId, sectionDTO.getId())
-                            .orderByAsc(PaperQuestion::getSectionOrder)
-                    );
-                    
+                            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<PaperQuestion>()
+                                    .eq(PaperQuestion::getPaperId, paperId)
+                                    .eq(PaperQuestion::getSectionId, sectionDTO.getId())
+                                    .orderByAsc(PaperQuestion::getSectionOrder));
+
                     // 转换为DTO并填充题目详情
                     List<PaperQuestionDTO> questionDTOs = new ArrayList<>();
                     if (!CollectionUtils.isEmpty(sectionQuestions)) {
                         for (PaperQuestion pq : sectionQuestions) {
-                PaperQuestionDTO qdto = new PaperQuestionDTO();
-                qdto.setId(pq.getId());
-                qdto.setPaperId(pq.getPaperId());
-                qdto.setQuestionId(pq.getQuestionId());
-                qdto.setSectionId(pq.getSectionId());
-                qdto.setSectionOrder(pq.getSectionOrder());
-                qdto.setSortOrder(pq.getSortOrder());
-                qdto.setScore(pq.getScore());
+                            PaperQuestionDTO qdto = new PaperQuestionDTO();
+                            qdto.setId(pq.getId());
+                            qdto.setPaperId(pq.getPaperId());
+                            qdto.setQuestionId(pq.getQuestionId());
+                            qdto.setSectionId(pq.getSectionId());
+                            qdto.setSectionOrder(pq.getSectionOrder());
+                            qdto.setSortOrder(pq.getSortOrder());
+                            qdto.setScore(pq.getScore());
 
                             // 填充题目详情（title, type, answers等）
                             if (pq.getQuestionId() != null) {
@@ -1692,15 +1813,52 @@ public class PaperServiceImpl implements IPaperService {
                                     qdto.setOptionType(questionInfo.getOptionType()); // 填充选项类型
                                 }
                             }
-                            
+
                             questionDTOs.add(qdto);
                         }
                     }
                     sectionDTO.setQuestions(questionDTOs);
+
+                    // 查询该大题下的题目组
+                    List<PaperQuestionGroup> sectionGroups = questionGroupService.listBySectionId(sectionDTO.getId());
+                    if (!CollectionUtils.isEmpty(sectionGroups)) {
+                        List<PaperQuestionGroupDTO> groupDTOs = new ArrayList<>();
+                        for (PaperQuestionGroup group : sectionGroups) {
+                            PaperQuestionGroupDTO groupDTO = new PaperQuestionGroupDTO();
+                            groupDTO.setId(group.getId());
+                            groupDTO.setSectionId(group.getSectionId());
+                            groupDTO.setGroupOrder(group.getGroupOrder());
+                            groupDTO.setAudioUrl(group.getAudioUrl());
+                            groupDTO.setAudioPath(group.getAudioPath());
+                            groupDTO.setAudioDuration(group.getAudioDuration());
+                            groupDTO.setIntroText(group.getIntroText());
+                            // 将 JSON 字符串转换回 List<Integer>
+                            if (group.getSelectedQuestionIds() != null && !group.getSelectedQuestionIds().isEmpty()) {
+                                try {
+                                    String jsonStr = group.getSelectedQuestionIds();
+                                    // 解析 "[1, 2, 3]" 格式的字符串
+                                    jsonStr = jsonStr.replace("[", "").replace("]", "").replace(" ", "");
+                                    if (!jsonStr.isEmpty()) {
+                                        List<Integer> ids = new ArrayList<>();
+                                        for (String idStr : jsonStr.split(",")) {
+                                            if (!idStr.isEmpty()) {
+                                                ids.add(Integer.parseInt(idStr.trim()));
+                                            }
+                                        }
+                                        groupDTO.setSelectedQuestionIds(ids);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("解析题目组selectedQuestionIds失败: {}", e.getMessage());
+                                }
+                            }
+                            groupDTOs.add(groupDTO);
+                        }
+                        sectionDTO.setQuestionGroups(groupDTOs);
+                    }
                 }
             }
         }
-        
+
         // 7. 设置到DTO（嵌套结构）
         dto.setVolumes(volumeDTOs);
 

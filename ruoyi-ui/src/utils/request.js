@@ -49,14 +49,22 @@ service.interceptors.request.use(config => {
       return config
     }
     const sessionObj = cache.session.getJSON('sessionObj')
+    const interval = 1000                         // 间隔时间(ms)，小于此时间视为重复提交
+    const expireTime = 5000                       // 过期时间(ms)，超过此时间自动清除，快速失败
+    const now = new Date().getTime()
+    
     if (sessionObj === undefined || sessionObj === null || sessionObj === '') {
       cache.session.setJSON('sessionObj', requestObj)
     } else {
       const s_url = sessionObj.url                  // 请求地址
       const s_data = sessionObj.data                // 请求数据
       const s_time = sessionObj.time                // 请求时间
-      const interval = 1000                         // 间隔时间(ms)，小于此时间视为重复提交
-      if (s_data === requestObj.data && requestObj.time - s_time < interval && s_url === requestObj.url) {
+      
+      // 如果超过过期时间，清除旧数据，允许新请求（快速失败）
+      if (now - s_time >= expireTime) {
+        cache.session.setJSON('sessionObj', requestObj)
+      } else if (s_data === requestObj.data && now - s_time < interval && s_url === requestObj.url) {
+        // 在间隔时间内且数据相同，视为重复提交
         const message = '数据正在处理，请勿重复提交'
         console.warn(`[${s_url}]: ` + message)
         return Promise.reject(new Error(message))
@@ -73,14 +81,35 @@ service.interceptors.request.use(config => {
 
 // 响应拦截器
 service.interceptors.response.use(res => {
+    // 二进制数据则直接返回（必须在检查code之前，避免Blob被当作JSON处理）
+    if (res.request.responseType ===  'blob' || res.request.responseType ===  'arraybuffer') {
+      // 检查响应类型，如果是application/json，可能是错误响应
+      const contentType = res.headers['content-type'] || res.headers['Content-Type'] || ''
+      if (contentType.includes('application/json')) {
+        // 如果是JSON错误响应，需要解析错误信息
+        // 注意：res.data此时已经是Blob，需要先转换为文本
+        const blob = res.data
+        if (blob instanceof Blob) {
+          return blob.text().then(text => {
+            try {
+              const errorData = JSON.parse(text)
+              const msg = errorData.msg || errorData.message || '下载失败'
+              Message({ message: msg, type: 'error' })
+              return Promise.reject(new Error(msg))
+            } catch (e) {
+              Message({ message: '响应格式错误', type: 'error' })
+              return Promise.reject(new Error('响应格式错误'))
+            }
+          })
+        }
+      }
+      // 直接返回Blob数据
+      return res.data
+    }
     // 未设置状态码则默认成功状态
     const code = res.data.code || 200
     // 获取错误信息
     const msg = errorCode[code] || res.data.msg || errorCode['default']
-    // 二进制数据则直接返回
-    if (res.request.responseType ===  'blob' || res.request.responseType ===  'arraybuffer') {
-      return res.data
-    }
     if (code === 401) {
       if (!isRelogin.show) {
         isRelogin.show = true

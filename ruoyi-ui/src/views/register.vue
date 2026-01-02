@@ -1,5 +1,7 @@
 <template>
   <div class="register">
+    <div class="watermark-1">择学</div>
+    <div class="watermark-2">择学</div>
     <el-form ref="registerForm" :model="registerForm" :rules="registerRules" class="register-form">
       <h3 class="title">{{title}}</h3>
       <el-form-item prop="username">
@@ -61,7 +63,7 @@
     </el-form>
     <!--  底部  -->
     <div class="el-register-footer">
-      <span>Copyright © 2018-2025 ruoyi.vip All Rights Reserved.</span>
+      <span>Copyright © 2025-2035 择学 All Rights Reserved.</span>
     </div>
   </div>
 </template>
@@ -155,7 +157,55 @@ export default {
   height: 100%;
   background-image: url("../assets/images/login-background.jpg");
   background-size: cover;
+  background-position: center;
+  position: relative;
+  
+  /* 择学水印 - 白色背景，使用深色水印，若隐若现 */
+  &::before {
+    content: '择学';
+    position: absolute;
+    top: 20%;
+    left: 15%;
+    font-size: 90px;
+    font-weight: bold;
+    color: rgba(102, 126, 234, 0.08);
+    font-family: 'KaiTi', 'STKaiti', '楷体', serif;
+    pointer-events: none;
+    z-index: 0;
+    transform: rotate(-12deg);
+    filter: blur(2px);
+    opacity: 0.5;
+    letter-spacing: 20px;
+  }
 }
+
+/* 通过额外的div实现剩余2个水印 - 白色背景，使用深色水印 */
+.register .watermark-1,
+.register .watermark-2 {
+  position: absolute;
+  font-size: 90px;
+  font-weight: bold;
+  color: rgba(102, 126, 234, 0.08);
+  font-family: 'KaiTi', 'STKaiti', '楷体', serif;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(2px);
+  opacity: 0.5;
+  letter-spacing: 20px;
+}
+
+.register .watermark-1 {
+  top: 65%;
+  left: 25%;
+  transform: rotate(18deg);
+}
+
+.register .watermark-2 {
+  top: 45%;
+  right: 20%;
+  transform: rotate(-8deg);
+}
+
 .title {
   margin: 0px auto 30px auto;
   text-align: center;
@@ -167,6 +217,8 @@ export default {
   background: #ffffff;
   width: 400px;
   padding: 25px 25px 5px 25px;
+  z-index: 10;
+  position: relative;
   .el-input {
     height: 38px;
     input {

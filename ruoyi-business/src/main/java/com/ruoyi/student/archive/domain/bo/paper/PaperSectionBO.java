@@ -6,6 +6,7 @@ import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * 试卷大题参数
@@ -14,7 +15,7 @@ import java.math.BigDecimal;
  */
 @Data
 public class PaperSectionBO implements Serializable {
-    
+
     private static final long serialVersionUID = 1L;
 
     /**
@@ -23,16 +24,24 @@ public class PaperSectionBO implements Serializable {
     private Integer id;
 
     /**
+     * 临时ID（用于导入时关联，格式：temp_sec_1）
+     */
+    private String tempId;
+
+    /**
      * 试卷ID
      */
-    @NotNull(message = "试卷ID不能为空")
     private Integer paperId;
 
     /**
      * 所属卷别ID（关联paper_volume.id）
      */
-    @NotNull(message = "卷别ID不能为空")
     private Integer volumeId;
+
+    /**
+     * 所属卷别临时ID（用于导入时关联，格式：temp_vol_1）
+     */
+    private String volumeTempId;
 
     /**
      * 卷别代码（A、B、C等，保留用于显示和兼容）
@@ -81,6 +90,13 @@ public class PaperSectionBO implements Serializable {
      */
     private Integer audioPlayCount;
 
+    /**
+     * 题目列表（用于导入时关联）
+     */
+    private List<PaperQuestionBO> questions;
+
+    /**
+     * 题目组列表（用于保存时包含题目组信息）
+     */
+    private List<PaperQuestionGroupBO> questionGroups;
 }
-
-

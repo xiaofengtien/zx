@@ -228,6 +228,14 @@ public class ParseResultDTO implements Serializable {
          */
         private Integer questionGroupId;
 
+        @com.fasterxml.jackson.annotation.JsonProperty("group_name")
+        @com.fasterxml.jackson.annotation.JsonAlias("groupName")
+        private String groupName;
+
+        @com.fasterxml.jackson.annotation.JsonProperty("answer_time")
+        @com.fasterxml.jackson.annotation.JsonAlias("answerTime")
+        private Integer answerTime;
+
         private List<ParsedQuestionDTO> questions;
     }
 

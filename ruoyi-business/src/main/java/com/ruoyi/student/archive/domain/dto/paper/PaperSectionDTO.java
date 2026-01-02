@@ -89,10 +89,13 @@ public class PaperSectionDTO implements Serializable {
      */
     private Integer audioPlayCount;
 
-
     /**
      * 该大题下的题目列表（嵌套结构）
      */
     private List<PaperQuestionDTO> questions;
-}
 
+    /**
+     * 该大题下的题目组列表（嵌套结构）
+     */
+    private List<PaperQuestionGroupDTO> questionGroups;
+}

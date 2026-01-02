@@ -269,9 +269,9 @@ public class AliyunOssService implements IOssService {
     }
 
     @Override
-    public String uploadMultipart(InputStream inputStream, String objectKey, String contentType, 
-                                 long fileSize, Long chunkSize, 
-                                 java.util.function.BiConsumer<Long, Long> progressCallback) {
+    public String uploadMultipart(InputStream inputStream, String objectKey, String contentType,
+            long fileSize, Long chunkSize,
+            java.util.function.BiConsumer<Long, Long> progressCallback) {
         if (inputStream == null) {
             throw new ServiceException("文件流不能为空");
         }
@@ -302,7 +302,7 @@ public class AliyunOssService implements IOssService {
                     chunkSizeBytes = 100L * 1024 * 1024; // 500MB以上用100MB分片
                 }
             }
-            
+
             // 如果文件大小小于等于50MB，使用普通上传（更快）
             if (fileSize <= 50L * 1024 * 1024) {
                 log.info("文件大小 {} MB，使用普通上传", fileSize / 1024.0 / 1024.0);
@@ -318,21 +318,20 @@ public class AliyunOssService implements IOssService {
             }
 
             // 大文件使用分片上传（Multipart Upload）
-            log.info("文件大小 {} MB，使用分片上传，分片大小: {} MB", 
+            log.info("文件大小 {} MB，使用分片上传，分片大小: {} MB",
                     fileSize / 1024.0 / 1024.0, chunkSizeBytes / 1024.0 / 1024.0);
 
             // 1. 初始化分片上传（新上传）
-            com.aliyun.oss.model.InitiateMultipartUploadRequest initRequest = 
-                    new com.aliyun.oss.model.InitiateMultipartUploadRequest(
-                            ossConfig.getBucketName(), key);
+            com.aliyun.oss.model.InitiateMultipartUploadRequest initRequest = new com.aliyun.oss.model.InitiateMultipartUploadRequest(
+                    ossConfig.getBucketName(), key);
             ObjectMetadata metadata = new ObjectMetadata();
             metadata.setContentType(finalContentType);
             initRequest.setObjectMetadata(metadata);
-            
-            com.aliyun.oss.model.InitiateMultipartUploadResult initResult = 
-                    ossClient.initiateMultipartUpload(initRequest);
+
+            com.aliyun.oss.model.InitiateMultipartUploadResult initResult = ossClient
+                    .initiateMultipartUpload(initRequest);
             String uploadId = initResult.getUploadId();
-            
+
             log.debug("初始化分片上传成功，UploadId: {}", uploadId);
 
             // 2. 先读取所有分片数据（用于并发上传）
@@ -340,83 +339,80 @@ public class AliyunOssService implements IOssService {
             byte[] buffer = new byte[(int) chunkSizeBytes];
             int bytesRead;
             int partNumber = 1;
-            
+
             while ((bytesRead = inputStream.read(buffer)) != -1) {
                 byte[] chunkData = new byte[bytesRead];
                 System.arraycopy(buffer, 0, chunkData, 0, bytesRead);
                 chunks.add(new ChunkData(partNumber, chunkData));
                 partNumber++;
             }
-            
+
             log.debug("已读取 {} 个分片，准备并发上传", chunks.size());
-            
+
             // 3. 并发上传分片（使用线程池）
             java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(4); // 4个并发线程
             java.util.List<java.util.concurrent.Future<com.aliyun.oss.model.PartETag>> futures = new java.util.ArrayList<>();
             java.util.concurrent.atomic.AtomicLong uploadedBytes = new java.util.concurrent.atomic.AtomicLong(0);
             java.util.List<com.aliyun.oss.model.PartETag> partETags = new java.util.ArrayList<>();
-            
+
             try {
                 // 提交所有分片上传任务
                 for (ChunkData chunk : chunks) {
                     String finalKey = key;
                     java.util.concurrent.Future<com.aliyun.oss.model.PartETag> future = executor.submit(() -> {
-                        java.io.ByteArrayInputStream partInputStream = 
-                                new java.io.ByteArrayInputStream(chunk.data);
-                        
-                        com.aliyun.oss.model.UploadPartRequest uploadPartRequest = 
-                                new com.aliyun.oss.model.UploadPartRequest();
+                        java.io.ByteArrayInputStream partInputStream = new java.io.ByteArrayInputStream(chunk.data);
+
+                        com.aliyun.oss.model.UploadPartRequest uploadPartRequest = new com.aliyun.oss.model.UploadPartRequest();
                         uploadPartRequest.setBucketName(ossConfig.getBucketName());
                         uploadPartRequest.setKey(finalKey);
                         uploadPartRequest.setUploadId(uploadId);
                         uploadPartRequest.setInputStream(partInputStream);
                         uploadPartRequest.setPartNumber(chunk.partNumber);
                         uploadPartRequest.setPartSize(chunk.data.length);
-                        
-                        com.aliyun.oss.model.UploadPartResult uploadPartResult = 
-                                ossClient.uploadPart(uploadPartRequest);
-                        
+
+                        com.aliyun.oss.model.UploadPartResult uploadPartResult = ossClient
+                                .uploadPart(uploadPartRequest);
+
                         long currentUploaded = uploadedBytes.addAndGet(chunk.data.length);
-                        
+
                         // 进度回调
                         if (progressCallback != null) {
                             progressCallback.accept(currentUploaded, fileSize);
                         }
-                        
-                        log.debug("上传分片 {} 成功，已上传: {} / {} MB", 
+
+                        log.debug("上传分片 {} 成功，已上传: {} / {} MB",
                                 chunk.partNumber, currentUploaded / 1024.0 / 1024.0, fileSize / 1024.0 / 1024.0);
-                        
+
                         return new com.aliyun.oss.model.PartETag(
                                 chunk.partNumber, uploadPartResult.getETag());
                     });
                     futures.add(future);
                 }
-                
+
                 // 等待所有分片上传完成
                 for (java.util.concurrent.Future<com.aliyun.oss.model.PartETag> future : futures) {
                     partETags.add(future.get());
                 }
-                
+
                 // 按partNumber排序（确保顺序正确）
                 partETags.sort((a, b) -> Integer.compare(a.getPartNumber(), b.getPartNumber()));
-                
+
                 executor.shutdown();
-                
+
             } catch (Exception e) {
                 executor.shutdownNow();
                 // 如果上传失败，不清除已上传的分片（支持断点续传）
                 // 注意：这里不再自动取消上传，而是保留已上传的分片，允许后续续传
-                log.warn("分片上传过程中出现异常，已上传的分片将保留，支持断点续传。UploadId: {}, 错误: {}", 
+                log.warn("分片上传过程中出现异常，已上传的分片将保留，支持断点续传。UploadId: {}, 错误: {}",
                         uploadId, e.getMessage());
                 throw e;
             }
-            
+
             // 4. 完成分片上传（使用排序后的partETags）
-            com.aliyun.oss.model.CompleteMultipartUploadRequest completeRequest = 
-                    new com.aliyun.oss.model.CompleteMultipartUploadRequest(
-                            ossConfig.getBucketName(), key, uploadId, partETags);
-            com.aliyun.oss.model.CompleteMultipartUploadResult completeResult = 
-                    ossClient.completeMultipartUpload(completeRequest);
+            com.aliyun.oss.model.CompleteMultipartUploadRequest completeRequest = new com.aliyun.oss.model.CompleteMultipartUploadRequest(
+                    ossConfig.getBucketName(), key, uploadId, partETags);
+            com.aliyun.oss.model.CompleteMultipartUploadResult completeResult = ossClient
+                    .completeMultipartUpload(completeRequest);
 
             // 最终进度回调
             if (progressCallback != null) {
@@ -424,7 +420,7 @@ public class AliyunOssService implements IOssService {
             }
 
             String fileUrl = buildFileUrl(key);
-            log.info("阿里云OSS分片上传成功: {} -> {}, 文件大小: {} MB, 分片数: {}", 
+            log.info("阿里云OSS分片上传成功: {} -> {}, 文件大小: {} MB, 分片数: {}",
                     key, fileUrl, fileSize / 1024.0 / 1024.0, partETags.size());
 
             return fileUrl;
@@ -436,10 +432,10 @@ public class AliyunOssService implements IOssService {
     }
 
     @Override
-    public UploadResult uploadMultipartWithResume(InputStream inputStream, String objectKey, String contentType, 
-                                                  long fileSize, Long chunkSize, 
-                                                  String uploadId, java.util.List<PartInfo> uploadedParts,
-                                                  java.util.function.BiConsumer<Long, Long> progressCallback) {
+    public UploadResult uploadMultipartWithResume(InputStream inputStream, String objectKey, String contentType,
+            long fileSize, Long chunkSize,
+            String uploadId, java.util.List<PartInfo> uploadedParts,
+            java.util.function.BiConsumer<Long, Long> progressCallback) {
         if (inputStream == null) {
             throw new ServiceException("文件流不能为空");
         }
@@ -493,38 +489,37 @@ public class AliyunOssService implements IOssService {
                 // 断点续传：使用已有的uploadId
                 log.info("使用断点续传，UploadId: {}，已上传分片数: {}", uploadId, uploadedParts.size());
                 finalUploadId = uploadId;
-                
+
                 // 查询OSS上已上传的分片（确保数据一致性）
                 java.util.List<PartInfo> ossParts = listUploadedParts(key, uploadId);
                 java.util.Map<Integer, PartInfo> ossPartsMap = new java.util.HashMap<>();
                 for (PartInfo part : ossParts) {
                     ossPartsMap.put(part.getPartNumber(), part);
                 }
-                
+
                 // 合并已上传的分片信息（优先使用OSS上的数据，因为OSS是权威数据源）
                 // 只使用OSS上实际存在的分片
                 for (PartInfo ossPart : ossParts) {
                     existingPartETags.add(new com.aliyun.oss.model.PartETag(
                             ossPart.getPartNumber(), ossPart.getETag()));
                 }
-                
+
                 log.info("断点续传：已确认 {} 个分片已上传（从OSS查询）", existingPartETags.size());
             } else {
                 // 新上传：初始化分片上传
-                log.info("文件大小 {} MB，使用分片上传，分片大小: {} MB", 
+                log.info("文件大小 {} MB，使用分片上传，分片大小: {} MB",
                         fileSize / 1024.0 / 1024.0, chunkSizeBytes / 1024.0 / 1024.0);
-                
-                com.aliyun.oss.model.InitiateMultipartUploadRequest initRequest = 
-                        new com.aliyun.oss.model.InitiateMultipartUploadRequest(
-                                ossConfig.getBucketName(), key);
+
+                com.aliyun.oss.model.InitiateMultipartUploadRequest initRequest = new com.aliyun.oss.model.InitiateMultipartUploadRequest(
+                        ossConfig.getBucketName(), key);
                 ObjectMetadata metadata = new ObjectMetadata();
                 metadata.setContentType(finalContentType);
                 initRequest.setObjectMetadata(metadata);
-                
-                com.aliyun.oss.model.InitiateMultipartUploadResult initResult = 
-                        ossClient.initiateMultipartUpload(initRequest);
+
+                com.aliyun.oss.model.InitiateMultipartUploadResult initResult = ossClient
+                        .initiateMultipartUpload(initRequest);
                 finalUploadId = initResult.getUploadId();
-                
+
                 log.debug("初始化分片上传成功，UploadId: {}", finalUploadId);
             }
 
@@ -540,7 +535,7 @@ public class AliyunOssService implements IOssService {
             byte[] buffer = new byte[(int) chunkSizeBytes];
             int bytesRead;
             int partNumber = 1;
-            
+
             while ((bytesRead = inputStream.read(buffer)) != -1) {
                 byte[] chunkData = new byte[bytesRead];
                 System.arraycopy(buffer, 0, chunkData, 0, bytesRead);
@@ -556,14 +551,14 @@ public class AliyunOssService implements IOssService {
                 }
             }
 
-            log.info("总分片数: {}，已上传: {}，待上传: {}", 
+            log.info("总分片数: {}，已上传: {}，待上传: {}",
                     totalParts, existingPartETags.size(), chunksToUpload.size());
 
             // 并发上传剩余分片
             java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(4);
             java.util.List<java.util.concurrent.Future<com.aliyun.oss.model.PartETag>> futures = new java.util.ArrayList<>();
             java.util.concurrent.atomic.AtomicLong uploadedBytes = new java.util.concurrent.atomic.AtomicLong(0);
-            
+
             // 计算已上传的字节数
             for (com.aliyun.oss.model.PartETag tag : existingPartETags) {
                 // 估算已上传的字节数（使用分片大小）
@@ -574,63 +569,60 @@ public class AliyunOssService implements IOssService {
                 for (ChunkData chunk : chunksToUpload) {
                     String finalKey = key;
                     java.util.concurrent.Future<com.aliyun.oss.model.PartETag> future = executor.submit(() -> {
-                        java.io.ByteArrayInputStream partInputStream = 
-                                new java.io.ByteArrayInputStream(chunk.data);
-                        
-                        com.aliyun.oss.model.UploadPartRequest uploadPartRequest = 
-                                new com.aliyun.oss.model.UploadPartRequest();
+                        java.io.ByteArrayInputStream partInputStream = new java.io.ByteArrayInputStream(chunk.data);
+
+                        com.aliyun.oss.model.UploadPartRequest uploadPartRequest = new com.aliyun.oss.model.UploadPartRequest();
                         uploadPartRequest.setBucketName(ossConfig.getBucketName());
                         uploadPartRequest.setKey(finalKey);
                         uploadPartRequest.setUploadId(finalUploadId);
                         uploadPartRequest.setInputStream(partInputStream);
                         uploadPartRequest.setPartNumber(chunk.partNumber);
                         uploadPartRequest.setPartSize(chunk.data.length);
-                        
-                        com.aliyun.oss.model.UploadPartResult uploadPartResult = 
-                                ossClient.uploadPart(uploadPartRequest);
-                        
+
+                        com.aliyun.oss.model.UploadPartResult uploadPartResult = ossClient
+                                .uploadPart(uploadPartRequest);
+
                         long currentUploaded = uploadedBytes.addAndGet(chunk.data.length);
-                        
+
                         // 进度回调
                         if (progressCallback != null) {
                             progressCallback.accept(currentUploaded, fileSize);
                         }
-                        
-                        log.debug("上传分片 {} 成功，已上传: {} / {} MB", 
+
+                        log.debug("上传分片 {} 成功，已上传: {} / {} MB",
                                 chunk.partNumber, currentUploaded / 1024.0 / 1024.0, fileSize / 1024.0 / 1024.0);
-                        
+
                         return new com.aliyun.oss.model.PartETag(
                                 chunk.partNumber, uploadPartResult.getETag());
                     });
                     futures.add(future);
                 }
-                
+
                 // 等待所有分片上传完成
                 java.util.List<com.aliyun.oss.model.PartETag> newPartETags = new java.util.ArrayList<>();
                 for (java.util.concurrent.Future<com.aliyun.oss.model.PartETag> future : futures) {
                     newPartETags.add(future.get());
                 }
-                
+
                 // 合并所有分片（已上传的 + 新上传的）
                 existingPartETags.addAll(newPartETags);
                 existingPartETags.sort((a, b) -> Integer.compare(a.getPartNumber(), b.getPartNumber()));
-                
+
                 executor.shutdown();
-                
+
             } catch (Exception e) {
                 executor.shutdownNow();
                 // 上传失败，不清除已上传的分片（支持断点续传）
-                log.warn("分片上传过程中出现异常，已上传的分片将保留，支持断点续传。UploadId: {}, 错误: {}", 
+                log.warn("分片上传过程中出现异常，已上传的分片将保留，支持断点续传。UploadId: {}, 错误: {}",
                         finalUploadId, e.getMessage());
                 throw e;
             }
-            
+
             // 完成分片上传
-            com.aliyun.oss.model.CompleteMultipartUploadRequest completeRequest = 
-                    new com.aliyun.oss.model.CompleteMultipartUploadRequest(
-                            ossConfig.getBucketName(), key, finalUploadId, existingPartETags);
-            com.aliyun.oss.model.CompleteMultipartUploadResult completeResult = 
-                    ossClient.completeMultipartUpload(completeRequest);
+            com.aliyun.oss.model.CompleteMultipartUploadRequest completeRequest = new com.aliyun.oss.model.CompleteMultipartUploadRequest(
+                    ossConfig.getBucketName(), key, finalUploadId, existingPartETags);
+            com.aliyun.oss.model.CompleteMultipartUploadResult completeResult = ossClient
+                    .completeMultipartUpload(completeRequest);
 
             // 最终进度回调
             if (progressCallback != null) {
@@ -638,7 +630,7 @@ public class AliyunOssService implements IOssService {
             }
 
             String fileUrl = buildFileUrl(key);
-            log.info("阿里云OSS分片上传成功: {} -> {}, 文件大小: {} MB, 分片数: {}", 
+            log.info("阿里云OSS分片上传成功: {} -> {}, 文件大小: {} MB, 分片数: {}",
                     key, fileUrl, fileSize / 1024.0 / 1024.0, existingPartETags.size());
 
             // 转换为PartInfo列表
@@ -666,19 +658,18 @@ public class AliyunOssService implements IOssService {
                 throw new ServiceException("上传ID不能为空");
             }
 
-            com.aliyun.oss.model.ListPartsRequest listPartsRequest = 
-                    new com.aliyun.oss.model.ListPartsRequest(
-                            ossConfig.getBucketName(), key, uploadId);
+            com.aliyun.oss.model.ListPartsRequest listPartsRequest = new com.aliyun.oss.model.ListPartsRequest(
+                    ossConfig.getBucketName(), key, uploadId);
             com.aliyun.oss.model.PartListing partListing = ossClient.listParts(listPartsRequest);
-            
+
             java.util.List<PartInfo> partInfoList = new java.util.ArrayList<>();
             for (com.aliyun.oss.model.PartSummary part : partListing.getParts()) {
                 partInfoList.add(new PartInfo(
-                        part.getPartNumber(), 
-                        part.getETag(), 
+                        part.getPartNumber(),
+                        part.getETag(),
                         part.getSize()));
             }
-            
+
             log.debug("查询已上传分片成功，UploadId: {}，分片数: {}", uploadId, partInfoList.size());
             return partInfoList;
         } catch (Exception e) {
@@ -698,11 +689,10 @@ public class AliyunOssService implements IOssService {
                 throw new ServiceException("上传ID不能为空");
             }
 
-            com.aliyun.oss.model.AbortMultipartUploadRequest abortRequest = 
-                    new com.aliyun.oss.model.AbortMultipartUploadRequest(
-                            ossConfig.getBucketName(), key, uploadId);
+            com.aliyun.oss.model.AbortMultipartUploadRequest abortRequest = new com.aliyun.oss.model.AbortMultipartUploadRequest(
+                    ossConfig.getBucketName(), key, uploadId);
             ossClient.abortMultipartUpload(abortRequest);
-            
+
             log.info("取消分片上传成功，UploadId: {}", uploadId);
             return true;
         } catch (Exception e) {
@@ -710,14 +700,14 @@ public class AliyunOssService implements IOssService {
             return false;
         }
     }
-    
+
     /**
      * 分片数据内部类（用于并发上传）
      */
     private static class ChunkData {
         final int partNumber;
         final byte[] data;
-        
+
         ChunkData(int partNumber, byte[] data) {
             this.partNumber = partNumber;
             this.data = data;
@@ -734,9 +724,48 @@ public class AliyunOssService implements IOssService {
             String key = extractObjectKey(objectKey);
             Date expirationDate = new Date(System.currentTimeMillis() + expirationSeconds * 1000);
             URL url = ossClient.generatePresignedUrl(ossConfig.getBucketName(), key, expirationDate);
-            return url.toString();
+            String signedUrl = url.toString();
+
+            // 强制使用 HTTPS（阿里云 SDK 默认可能返回 HTTP）
+            if (signedUrl.startsWith("http://")) {
+                signedUrl = "https://" + signedUrl.substring(7);
+            }
+
+            return signedUrl;
         } catch (Exception e) {
             log.error("阿里云OSS生成预签名URL失败: {}", objectKey, e);
+            throw new ServiceException("生成预签名URL失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 为指定桶生成预签名URL（用于跨桶下载，如 asr-temp-audio）
+     * 
+     * @param bucketName        桶名
+     * @param objectKey         对象键
+     * @param expirationSeconds 过期时间（秒）
+     * @return 带签名的临时下载URL
+     */
+    public String generatePresignedUrlForBucket(String bucketName, String objectKey, long expirationSeconds) {
+        if (StringUtils.isEmpty(bucketName) || StringUtils.isEmpty(objectKey)) {
+            throw new ServiceException("桶名和对象键不能为空");
+        }
+
+        try {
+            String key = extractObjectKey(objectKey);
+            Date expirationDate = new Date(System.currentTimeMillis() + expirationSeconds * 1000);
+            URL url = ossClient.generatePresignedUrl(bucketName, key, expirationDate);
+            String signedUrl = url.toString();
+
+            // 强制使用 HTTPS
+            if (signedUrl.startsWith("http://")) {
+                signedUrl = "https://" + signedUrl.substring(7);
+            }
+
+            log.debug("为桶 {} 生成签名URL: {}", bucketName, signedUrl);
+            return signedUrl;
+        } catch (Exception e) {
+            log.error("为桶 {} 生成预签名URL失败: {}", bucketName, objectKey, e);
             throw new ServiceException("生成预签名URL失败: " + e.getMessage());
         }
     }
@@ -752,8 +781,14 @@ public class AliyunOssService implements IOssService {
         }
 
         try {
-            if (StringUtils.isNotEmpty(ossConfig.getCdn()) && url.startsWith(ossConfig.getCdn())) {
-                String key = url.substring(ossConfig.getCdn().length());
+            // 统一转换为 https 进行比较
+            String normalizedUrl = url;
+            if (url.startsWith("http://")) {
+                normalizedUrl = "https://" + url.substring(7);
+            }
+
+            if (StringUtils.isNotEmpty(ossConfig.getCdn()) && normalizedUrl.startsWith(ossConfig.getCdn())) {
+                String key = normalizedUrl.substring(ossConfig.getCdn().length());
                 if (key.startsWith("/")) {
                     key = key.substring(1);
                 }
@@ -761,8 +796,26 @@ public class AliyunOssService implements IOssService {
             }
 
             String urlPrefix = ossConfig.getUrlPrefix();
-            if (StringUtils.isNotEmpty(urlPrefix) && url.startsWith(urlPrefix)) {
-                String key = url.substring(urlPrefix.length());
+            if (StringUtils.isNotEmpty(urlPrefix)) {
+                // 尝试匹配 urlPrefix（支持 http/https）
+                String normalizedPrefix = urlPrefix;
+                if (normalizedPrefix.startsWith("http://")) {
+                    normalizedPrefix = "https://" + normalizedPrefix.substring(7);
+                }
+                if (normalizedUrl.startsWith(normalizedPrefix)) {
+                    String key = normalizedUrl.substring(normalizedPrefix.length());
+                    if (key.startsWith("/")) {
+                        key = key.substring(1);
+                    }
+                    return key;
+                }
+            }
+
+            // 尝试直接从 bucket.oss-region.aliyuncs.com/key 格式提取
+            String bucketDomain = ossConfig.getBucketName() + "." + ossConfig.getEndpoint();
+            int domainIndex = normalizedUrl.indexOf(bucketDomain);
+            if (domainIndex >= 0) {
+                String key = normalizedUrl.substring(domainIndex + bucketDomain.length());
                 if (key.startsWith("/")) {
                     key = key.substring(1);
                 }
@@ -923,4 +976,3 @@ public class AliyunOssService implements IOssService {
         return "https://" + ossConfig.getBucketName() + "." + ossConfig.getEndpoint();
     }
 }
-

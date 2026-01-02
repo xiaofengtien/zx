@@ -1,9 +1,7 @@
 const axios = require('axios')
 const { app } = require('electron')
-const path = require('path')
-
 // 后端API地址
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
+const API_BASE_URL = app.isPackaged ? 'http://47.94.192.7:8818/prod-api' : (process.env.API_BASE_URL || 'http://localhost:8080')
 
 /**
  * 答题服务
@@ -27,7 +25,7 @@ class AnswerService {
   async startExam({ paperId, paperName, appUserId, volumeCodes = [], assignedSeatNumber = null }) {
     try {
       const now = Date.now()
-      
+
       // 检查是否已有未提交的答题记录
       const existing = this.db.prepare(`
         SELECT id, start_time, is_submit, volume_status
@@ -38,11 +36,18 @@ class AnswerService {
       `).get(paperId, appUserId)
 
       if (existing) {
-        console.log('发现未提交的答题记录，继续答题')
+        console.log('发现未提交的答题记录，更新开始时间并继续答题')
+        // 更新 start_time 为当前时间，确保用时计算准确
+        this.db.prepare(`
+          UPDATE app_user_paper_info
+          SET start_time = ?, update_time = ?
+          WHERE id = ?
+        `).run(now, now, existing.id)
+        
         return {
           success: true,
           paperInfoId: existing.id,
-          startTime: existing.start_time,
+          startTime: now, // 返回新的开始时间
           volumeStatus: existing.volume_status ? JSON.parse(existing.volume_status) : {},
           message: '继续未完成的答题'
         }
@@ -67,9 +72,9 @@ class AnswerService {
           is_submit, sync_status, create_time, update_time
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        paperId, 
-        paperName, 
-        appUserId, 
+        paperId,
+        paperName,
+        appUserId,
         now,
         0, // practice_count
         null, // last_practice_time
@@ -111,6 +116,8 @@ class AnswerService {
    * @param {number} params.result - 结果（0-错误，1-正确）
    * @param {number} params.questionSort - 题目序号
    * @param {number} params.timeSpent - 用时（秒）
+   * @param {number} params.sectionId - 大题ID
+   * @param {number} params.volumeId - 卷别ID
    * @returns {Promise<Object>} 保存结果
    */
   async saveQuestionResult({
@@ -122,42 +129,92 @@ class AnswerService {
     userAnswer,
     result,
     questionSort,
-    timeSpent
+    timeSpent,
+    sectionId,
+    volumeId
   }) {
     try {
+      // 验证必要参数
+      if (!paperId) {
+        console.error('❌ [saveQuestionResult] paperId 为空，无法保存')
+        return { success: false, message: 'paperId 为空' }
+      }
+      if (!appUserId) {
+        console.error('❌ [saveQuestionResult] appUserId 为空，无法保存')
+        return { success: false, message: 'appUserId 为空' }
+      }
+      if (!questionId) {
+        console.error('❌ [saveQuestionResult] questionId 为空，无法保存，参数:', { paperId, appUserId, questionSort, sectionId })
+        return { success: false, message: 'questionId 为空' }
+      }
+
+      console.log(`📦 [saveQuestionResult] 保存答题结果: paperId=${paperId}, appUserId=${appUserId}, questionId=${questionId}, questionSort=${questionSort}, sectionId=${sectionId}`)
+
       const now = Date.now()
 
       // 检查是否已存在该题目的答题结果
-      const existing = this.db.prepare(`
-        SELECT id FROM app_user_paper_question_result
-        WHERE paper_id = ? AND app_user_id = ? AND question_id = ?
-      `).get(paperId, appUserId, questionId)
+      // 注意：同一道题可能出现在不同大题中，所以需要加入 section_id 作为唯一键的一部分
+      let existing = null
+      if (sectionId) {
+        // 如果有 sectionId，使用 paper_id + app_user_id + question_id + section_id 作为唯一键
+        existing = this.db.prepare(`
+          SELECT id FROM app_user_paper_question_result
+          WHERE paper_id = ? AND app_user_id = ? AND question_id = ? AND section_id = ?
+        `).get(paperId, appUserId, questionId, sectionId)
+      } else {
+        // 如果没有 sectionId，使用 paper_id + app_user_id + question_id 作为唯一键（兼容旧数据）
+        existing = this.db.prepare(`
+          SELECT id FROM app_user_paper_question_result
+          WHERE paper_id = ? AND app_user_id = ? AND question_id = ? AND section_id IS NULL
+        `).get(paperId, appUserId, questionId)
+      }
 
       if (existing) {
         // 更新现有记录
+        console.log(`📦 [saveQuestionResult] 更新现有记录，id=${existing.id}`)
         this.db.prepare(`
           UPDATE app_user_paper_question_result
           SET answer_ids = ?, user_answer = ?, result = ?, 
-              question_sort = ?, answer_time = ?, time_spent = ?,
+              question_sort = ?, volume_id = ?, answer_time = ?, time_spent = ?,
               sync_status = 0
           WHERE id = ?
-        `).run(answerIds, userAnswer, result, questionSort, now, timeSpent, existing.id)
+        `).run(
+          answerIds,
+          userAnswer,
+          result,
+          questionSort,
+          volumeId || null,
+          now,
+          timeSpent,
+          existing.id
+        )
       } else {
         // 插入新记录
+        console.log(`📦 [saveQuestionResult] 插入新记录`)
         this.db.prepare(`
           INSERT INTO app_user_paper_question_result (
             paper_id, app_user_id, question_id, answer_ids, user_answer,
-            result, question_sort, answer_time, time_spent, sync_status, create_time
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            result, question_sort, section_id, volume_id, answer_time, time_spent, sync_status, create_time
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         `).run(
-          paperId, appUserId, questionId, answerIds, userAnswer,
-          result, questionSort, now, timeSpent, now
+          paperId,
+          appUserId,
+          questionId,
+          answerIds,
+          userAnswer,
+          result,
+          questionSort,
+          sectionId || null,
+          volumeId || null,
+          now,
+          timeSpent,
+          now
         )
       }
 
       return { success: true }
     } catch (error) {
-      console.error('保存题目答题结果失败:', error)
+      console.error('[Answer] ✗ 保存题目答题结果失败:', error)
       throw error
     }
   }
@@ -220,7 +277,7 @@ class AnswerService {
 
       return { success: true }
     } catch (error) {
-      console.error('保存完形填空答题结果失败:', error)
+      console.error('[Answer] ✗ 保存完形填空答题结果失败:', error)
       throw error
     }
   }
@@ -614,7 +671,7 @@ class AnswerService {
       }
 
       if (paperInfo.sync_status === 1) {
-        console.log('答题记录已同步，跳过')
+        console.log('[Answer] 答题记录已同步，跳过')
         return { success: true, message: '已同步', skipped: true }
       }
 
@@ -644,7 +701,7 @@ class AnswerService {
         'Authorization': `Bearer ${token}`
       }
 
-      console.log('提交答题结果到服务端:', {
+      console.log('[Answer] 提交答题结果到服务端:', {
         paperInfoId,
         paperId: paperInfo.paper_id,
         questionCount: submitData.questionResults.length,
@@ -692,7 +749,7 @@ class AnswerService {
       }
     } catch (error) {
       console.error('同步答题结果到服务端失败:', error)
-      
+
       // 如果是网络错误，返回失败但不抛出异常（允许离线缓存）
       if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || !error.response) {
         return {
@@ -804,4 +861,3 @@ class AnswerService {
 }
 
 module.exports = AnswerService
-

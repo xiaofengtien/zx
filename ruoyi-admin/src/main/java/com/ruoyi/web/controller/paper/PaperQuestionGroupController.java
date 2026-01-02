@@ -54,6 +54,8 @@ public class PaperQuestionGroupController extends BaseController {
             map.put("sectionId", group.getSectionId());
             map.put("questionGroupId", group.getQuestionGroupId());
             map.put("groupOrder", group.getGroupOrder());
+            map.put("groupName", group.getGroupName());
+            map.put("answerTime", group.getAnswerTime());
 
             // 如果关联了题目组，优先使用题目组的信息
             if (group.getQuestionGroupId() != null) {

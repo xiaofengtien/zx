@@ -89,6 +89,38 @@ const user = {
               router.push({ name: 'Profile', params: { activeTab: 'resetPwd' } })
             }).catch(() => {})
           }
+          /* 学员首次登录强制修改密码提示 */
+          if(res.needForceChangePassword) {
+            MessageBox.confirm('首次登录需要修改密码，请立即修改密码！',  '安全提示', { 
+              confirmButtonText: '确定', 
+              cancelButtonText: '取消', 
+              type: 'warning',
+              closeOnClickModal: false,
+              closeOnPressEscape: false
+            }).then(() => {
+              // 跳转到修改密码页面（学员使用学员的修改密码页面）
+              if (user.userType === '01') {
+                // 学员类型，跳转到学员修改密码页面
+                router.push({ path: '/student/profile', query: { activeTab: 'resetPwd' } }).catch(() => {})
+              } else {
+                router.push({ name: 'Profile', params: { activeTab: 'resetPwd' } })
+              }
+            }).catch(() => {
+              // 用户取消，但仍然需要强制修改密码，再次提示
+              MessageBox.confirm('为了账户安全，首次登录必须修改密码！',  '安全提示', { 
+                confirmButtonText: '确定', 
+                type: 'warning',
+                closeOnClickModal: false,
+                closeOnPressEscape: false
+              }).then(() => {
+                if (user.userType === '01') {
+                  router.push({ path: '/student/profile', query: { activeTab: 'resetPwd' } }).catch(() => {})
+                } else {
+                  router.push({ name: 'Profile', params: { activeTab: 'resetPwd' } })
+                }
+              })
+            })
+          }
           resolve(res)
         }).catch(error => {
           reject(error)

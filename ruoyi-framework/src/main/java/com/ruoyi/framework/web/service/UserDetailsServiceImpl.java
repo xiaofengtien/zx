@@ -16,11 +16,11 @@ import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.system.service.ISysUserService;
 
 /**
- * 用户验证处理
+ * 用户验证处理（系统用户）
  *
  * @author ruoyi
  */
-@Service
+@Service("userDetailsServiceImpl")
 public class UserDetailsServiceImpl implements UserDetailsService
 {
     private static final Logger log = LoggerFactory.getLogger(UserDetailsServiceImpl.class);

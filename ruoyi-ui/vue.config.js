@@ -7,7 +7,12 @@ function resolve(dir) {
 
 const CompressionPlugin = require('compression-webpack-plugin')
 
-const name = process.env.VUE_APP_TITLE || '若依管理系统' // 网页标题
+const name = process.env.VUE_APP_TITLE || '择学考试后台管理系统' // 网页标题
+
+// 设置默认的API基础路径
+if (!process.env.VUE_APP_BASE_API) {
+  process.env.VUE_APP_BASE_API = '/dev-api'
+}
 
 const baseUrl = 'http://localhost:8080' // 后端接口
 
@@ -35,16 +40,22 @@ module.exports = {
     open: true,
     proxy: {
       // detail: https://cli.vuejs.org/config/#devserver-proxy
-      [process.env.VUE_APP_BASE_API]: {
+      '/dev-api': {
         target: baseUrl,
         changeOrigin: true,
         pathRewrite: {
-          ['^' + process.env.VUE_APP_BASE_API]: ''
+          '^/dev-api': ''
+        },
+        onProxyReq: function(proxyReq, req, res) {
+          console.log(`[代理转发] ${req.method} ${req.url} -> ${proxyReq.path}`);
+        },
+        onError: function(err, req, res) {
+          console.error(`[代理错误] ${req.method} ${req.url} -> ${err.message}`);
         }
       },
       // springdoc proxy
       '^/v3/api-docs/(.*)': {
-        target: baseUrl,
+        target: 'http://localhost:8080',
         changeOrigin: true
       }
     },
@@ -98,39 +109,39 @@ module.exports = {
       .end()
 
     config.when(process.env.NODE_ENV !== 'development', config => {
-          config
-            .plugin('ScriptExtHtmlWebpackPlugin')
-            .after('html')
-            .use('script-ext-html-webpack-plugin', [{
-            // `runtime` must same as runtimeChunk name. default is `runtime`
-              inline: /runtime\..*\.js$/
-            }])
-            .end()
+      config
+        .plugin('ScriptExtHtmlWebpackPlugin')
+        .after('html')
+        .use('script-ext-html-webpack-plugin', [{
+          // `runtime` must same as runtimeChunk name. default is `runtime`
+          inline: /runtime\..*\.js$/
+        }])
+        .end()
 
-          config.optimization.splitChunks({
-            chunks: 'all',
-            cacheGroups: {
-              libs: {
-                name: 'chunk-libs',
-                test: /[\\/]node_modules[\\/]/,
-                priority: 10,
-                chunks: 'initial' // only package third parties that are initially dependent
-              },
-              elementUI: {
-                name: 'chunk-elementUI', // split elementUI into a single package
-                test: /[\\/]node_modules[\\/]_?element-ui(.*)/, // in order to adapt to cnpm
-                priority: 20 // the weight needs to be larger than libs and app or it will be packaged into libs or app
-              },
-              commons: {
-                name: 'chunk-commons',
-                test: resolve('src/components'), // can customize your rules
-                minChunks: 3, //  minimum common number
-                priority: 5,
-                reuseExistingChunk: true
-              }
-            }
-          })
-          config.optimization.runtimeChunk('single')
+      config.optimization.splitChunks({
+        chunks: 'all',
+        cacheGroups: {
+          libs: {
+            name: 'chunk-libs',
+            test: /[\\/]node_modules[\\/]/,
+            priority: 10,
+            chunks: 'initial' // only package third parties that are initially dependent
+          },
+          elementUI: {
+            name: 'chunk-elementUI', // split elementUI into a single package
+            test: /[\\/]node_modules[\\/]_?element-ui(.*)/, // in order to adapt to cnpm
+            priority: 20 // the weight needs to be larger than libs and app or it will be packaged into libs or app
+          },
+          commons: {
+            name: 'chunk-commons',
+            test: resolve('src/components'), // can customize your rules
+            minChunks: 3, //  minimum common number
+            priority: 5,
+            reuseExistingChunk: true
+          }
+        }
+      })
+      config.optimization.runtimeChunk('single')
     })
   }
 }

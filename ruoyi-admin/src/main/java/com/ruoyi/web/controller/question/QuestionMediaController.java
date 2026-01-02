@@ -60,7 +60,7 @@ public class QuestionMediaController extends BaseController {
             String domain = ossUtil.getDomain(); // OSS域名,用于拼接完整URL
             String ossType = ossUtil.getOssType(); // OSS类型（qiniu/aliyun）
             String uploadUrl = ossUtil.getUploadUrl(); // OSS上传地址（用于前端直接上传）
-            
+
             AjaxResult ajax = AjaxResult.success();
             ajax.put("token", uploadToken);
             ajax.put("domain", domain);
@@ -79,16 +79,157 @@ public class QuestionMediaController extends BaseController {
     @GetMapping("/getDownloadUrl")
     public AjaxResult getDownloadUrl(@RequestParam("url") String url) {
         try {
-            // 从URL中提取ObjectKey
-            String objectKey = ossUtil.getObjectKey(url);
-            // 生成带签名的临时下载URL（有效期1小时）
-            String downloadUrl = ossUtil.getPrivateDownloadUrl(objectKey, 3600);
+            String downloadUrl;
+
+            // 如果 URL 已经是完整的可访问 URL
+            if (url.startsWith("http://") || url.startsWith("https://")) {
+                if (url.contains(".aliyuncs.com")) {
+                    // 阿里云 OSS URL，需要判断是否是私有 bucket
+                    // 解析 bucket 名称：https://bucket-name.oss-region.aliyuncs.com/object_key
+                    String urlWithoutProtocol = url.replaceFirst("https?://", "");
+                    int domainEnd = urlWithoutProtocol.indexOf(".oss-");
+                    if (domainEnd > 0) {
+                        String bucket = urlWithoutProtocol.substring(0, domainEnd);
+                        int pathStart = urlWithoutProtocol.indexOf("/");
+                        if (pathStart > 0) {
+                            String objectKey = urlWithoutProtocol.substring(pathStart + 1);
+                            // 去除 URL 参数（如 ?xxx）
+                            int queryIndex = objectKey.indexOf("?");
+                            if (queryIndex > 0) {
+                                objectKey = objectKey.substring(0, queryIndex);
+                            }
+
+                            log.info("解析阿里云OSS URL: bucket={}, objectKey={}", bucket, objectKey);
+
+                            // 对该 bucket 生成签名 URL
+                            downloadUrl = generateSignedUrlForBucket(bucket, objectKey);
+                        } else {
+                            // 无法解析，直接使用原 URL
+                            downloadUrl = url;
+                        }
+                    } else {
+                        // 无法解析 bucket 名称，直接使用原 URL
+                        downloadUrl = url;
+                    }
+                } else if (url.contains(".qiniudn.com") || url.contains(".qbox.me")) {
+                    // 七牛云 URL，使用现有方法
+                    String objectKey = ossUtil.getObjectKey(url);
+                    downloadUrl = ossUtil.getPrivateDownloadUrl(objectKey, 3600);
+                } else {
+                    // 其他 URL，尝试提取 object key 并生成签名 URL
+                    String objectKey = ossUtil.getObjectKey(url);
+                    downloadUrl = ossUtil.getPrivateDownloadUrl(objectKey, 3600);
+                }
+            } else if (url.startsWith("aliyun-oss://")) {
+                // aliyun-oss:// 格式，需要生成签名 URL
+                downloadUrl = generateAliyunOssSignedUrl(url);
+            } else {
+                // 其他格式（如相对路径），使用 OSS 服务生成签名 URL
+                String objectKey = ossUtil.getObjectKey(url);
+                // 检测是否来自 asr-temp-audio 桶（exam/audio/ 路径）
+                if (objectKey != null && objectKey.startsWith("exam/audio/")) {
+                    log.info("检测到 ASR 音频路径，使用 asr-temp-audio 桶生成签名: {}", objectKey);
+                    downloadUrl = ossUtil.getPrivateDownloadUrlForBucket("asr-temp-audio", objectKey, 3600);
+                } else {
+                    downloadUrl = ossUtil.getPrivateDownloadUrl(objectKey, 3600);
+                }
+            }
+
+            // 强制使用 HTTPS（统一处理所有 OSS 类型）
+            if (downloadUrl != null && downloadUrl.startsWith("http://")) {
+                downloadUrl = "https://" + downloadUrl.substring(7);
+            }
+
             AjaxResult ajax = AjaxResult.success();
             ajax.put("downloadUrl", downloadUrl);
             return ajax;
         } catch (Exception e) {
             log.error("获取下载URL失败: {}", url, e);
             return AjaxResult.error("获取下载URL失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 为指定 bucket 生成签名 URL
+     */
+    private String generateSignedUrlForBucket(String bucket, String objectKey) throws Exception {
+        log.info("生成签名URL: bucket={}, objectKey={}", bucket, objectKey);
+
+        // 获取配置
+        String accessKeyId = System.getenv("ALIYUN_ACCESS_KEY_ID");
+        String accessKeySecret = System.getenv("ALIYUN_ACCESS_KEY_SECRET");
+
+        if (accessKeyId == null || accessKeySecret == null) {
+            accessKeyId = "LTAI5tHZ7Jid674gjy3m28XL";
+            accessKeySecret = "msjnMVfjntJb1VBXykdpqwazTukdpg";
+        }
+
+        // 根据 bucket 名称确定 endpoint
+        String endpoint = "oss-cn-shanghai.aliyuncs.com";
+
+        com.aliyun.oss.OSS ossClient = new com.aliyun.oss.OSSClientBuilder().build(endpoint, accessKeyId,
+                accessKeySecret);
+        try {
+            // 设置URL过期时间为1小时
+            java.util.Date expiration = new java.util.Date(System.currentTimeMillis() + 3600 * 1000);
+            String signedUrl = ossClient.generatePresignedUrl(bucket, objectKey, expiration).toString();
+
+            // 强制使用 HTTPS
+            if (signedUrl.startsWith("http://")) {
+                signedUrl = "https://" + signedUrl.substring(7);
+            }
+
+            log.info("生成签名URL成功: {}", signedUrl.substring(0, Math.min(80, signedUrl.length())));
+            return signedUrl;
+        } finally {
+            ossClient.shutdown();
+        }
+    }
+
+    /**
+     * 生成阿里云 OSS 签名下载 URL
+     */
+    private String generateAliyunOssSignedUrl(String url) throws Exception {
+        // 解析 URL: aliyun-oss://bucket/object_key
+        String path = url.substring("aliyun-oss://".length());
+        int slashIndex = path.indexOf('/');
+        if (slashIndex <= 0) {
+            throw new IllegalArgumentException("Invalid aliyun-oss URL: " + url);
+        }
+        String bucket = path.substring(0, slashIndex);
+        String objectKey = path.substring(slashIndex + 1);
+
+        log.info("生成阿里云OSS签名URL: bucket={}, objectKey={}", bucket, objectKey);
+
+        // 获取配置
+        String accessKeyId = System.getenv("ALIYUN_ACCESS_KEY_ID");
+        String accessKeySecret = System.getenv("ALIYUN_ACCESS_KEY_SECRET");
+        String endpoint = System.getenv("ALIYUN_OSS_ENDPOINT");
+
+        if (accessKeyId == null || accessKeySecret == null) {
+            accessKeyId = "LTAI5tHZ7Jid674gjy3m28XL";
+            accessKeySecret = "msjnMVfjntJb1VBXykdpqwazTukdpg";
+        }
+        if (endpoint == null) {
+            endpoint = "oss-cn-shanghai.aliyuncs.com";
+        }
+
+        com.aliyun.oss.OSS ossClient = new com.aliyun.oss.OSSClientBuilder().build(endpoint, accessKeyId,
+                accessKeySecret);
+        try {
+            // 设置URL过期时间为1小时
+            java.util.Date expiration = new java.util.Date(System.currentTimeMillis() + 3600 * 1000);
+            String signedUrl = ossClient.generatePresignedUrl(bucket, objectKey, expiration).toString();
+
+            // 强制使用 HTTPS（阿里云 OSS 默认生成 HTTP URL）
+            if (signedUrl.startsWith("http://")) {
+                signedUrl = "https://" + signedUrl.substring(7);
+            }
+
+            log.info("生成签名URL成功: {}", signedUrl.substring(0, Math.min(80, signedUrl.length())));
+            return signedUrl;
+        } finally {
+            ossClient.shutdown();
         }
     }
 
@@ -307,12 +448,27 @@ public class QuestionMediaController extends BaseController {
         log.info("代理访问媒体文件请求: {}, token存在: {}", url, token != null);
 
         try {
-            // 从CDN下载文件（使用私有签名URL，避免403）
-            log.info("开始下载文件: {}", url);
-            // 先提取ObjectKey，再下载，避免URL编码问题
-            String objectKey = ossUtil.getObjectKey(url);
-            log.info("提取ObjectKey: {}", objectKey);
-            byte[] fileBytes = ossUtil.downloadFileToBytes(objectKey);
+            byte[] fileBytes;
+
+            // 检查是否是阿里云 OSS 格式 (aliyun-oss://bucket/object_key)
+            if (url.startsWith("aliyun-oss://")) {
+                log.info("检测到阿里云OSS格式，使用阿里云SDK下载");
+                fileBytes = downloadFromAliyunOss(url);
+            } else {
+                // 使用现有的OSS服务下载
+                log.info("开始下载文件: {}", url);
+                String objectKey = ossUtil.getObjectKey(url);
+                log.info("提取ObjectKey: {}", objectKey);
+
+                // 检测是否来自 asr-temp-audio 桶（exam/audio/ 路径）
+                if (objectKey != null && objectKey.startsWith("exam/audio/")) {
+                    log.info("检测到 ASR 音频路径，使用 asr-temp-audio 桶下载");
+                    String signedUrl = ossUtil.getPrivateDownloadUrlForBucket("asr-temp-audio", objectKey, 3600);
+                    fileBytes = downloadFromUrl(signedUrl);
+                } else {
+                    fileBytes = ossUtil.downloadFileToBytes(objectKey);
+                }
+            }
             log.info("文件下载成功，大小: {} bytes", fileBytes.length);
 
             // 根据URL确定Content-Type
@@ -345,6 +501,57 @@ public class QuestionMediaController extends BaseController {
     }
 
     /**
+     * 从阿里云 OSS 下载文件
+     * URL 格式: aliyun-oss://bucket/object_key
+     */
+    private byte[] downloadFromAliyunOss(String url) throws Exception {
+        // 解析 URL: aliyun-oss://bucket/object_key
+        String path = url.substring("aliyun-oss://".length());
+        int slashIndex = path.indexOf('/');
+        if (slashIndex <= 0) {
+            throw new IllegalArgumentException("Invalid aliyun-oss URL: " + url);
+        }
+        String bucket = path.substring(0, slashIndex);
+        String objectKey = path.substring(slashIndex + 1);
+
+        log.info("阿里云OSS下载: bucket={}, objectKey={}", bucket, objectKey);
+
+        // 使用阿里云 OSS SDK 下载
+        // 从环境变量获取配置（与 Python 服务共用）
+        String accessKeyId = System.getenv("ALIYUN_ACCESS_KEY_ID");
+        String accessKeySecret = System.getenv("ALIYUN_ACCESS_KEY_SECRET");
+        String endpoint = System.getenv("ALIYUN_OSS_ENDPOINT");
+
+        if (accessKeyId == null || accessKeySecret == null) {
+            // 尝试从 Spring 配置读取
+            accessKeyId = org.springframework.util.StringUtils.hasText(accessKeyId) ? accessKeyId
+                    : "LTAI5tHZ7Jid674gjy3m28XL";
+            accessKeySecret = org.springframework.util.StringUtils.hasText(accessKeySecret) ? accessKeySecret
+                    : "msjnMVfjntJb1VBXykdpqwazTukdpg";
+        }
+        if (endpoint == null) {
+            endpoint = "oss-cn-shanghai.aliyuncs.com";
+        }
+
+        com.aliyun.oss.OSS ossClient = new com.aliyun.oss.OSSClientBuilder().build(endpoint, accessKeyId,
+                accessKeySecret);
+        try {
+            com.aliyun.oss.model.OSSObject ossObject = ossClient.getObject(bucket, objectKey);
+            java.io.InputStream inputStream = ossObject.getObjectContent();
+            java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+            inputStream.close();
+            return outputStream.toByteArray();
+        } finally {
+            ossClient.shutdown();
+        }
+    }
+
+    /**
      * 根据URL确定Content-Type
      */
     private String determineContentTypeFromUrl(String url) {
@@ -367,5 +574,28 @@ public class QuestionMediaController extends BaseController {
             return "video/mp4";
         }
         return "application/octet-stream";
+    }
+
+    /**
+     * 从 HTTP URL 下载文件
+     */
+    private byte[] downloadFromUrl(String url) throws Exception {
+        java.net.URL urlObj = new java.net.URL(url);
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) urlObj.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(60000);
+
+        try (java.io.InputStream inputStream = conn.getInputStream();
+                java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+            return outputStream.toByteArray();
+        } finally {
+            conn.disconnect();
+        }
     }
 }

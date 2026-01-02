@@ -34,7 +34,7 @@
               <div v-else>
                 <div v-for="task in inProgressTasks" :key="task.id" class="task-item">
                   <div class="task-header">
-                    <span class="task-name">{{ task.name }}</span>
+                    <span class="task-name">{{ formatTaskName(task.name) }}</span>
                     <el-tag size="mini" type="info">{{ getTaskTypeLabel(task.type) }}</el-tag>
                   </div>
                   <div class="task-progress">
@@ -69,7 +69,7 @@
               <div v-else>
                 <div v-for="task in completedTasks" :key="task.id" class="task-item completed">
                   <div class="task-header">
-                    <span class="task-name">{{ task.name }}</span>
+                    <span class="task-name">{{ formatTaskName(task.name) }}</span>
                     <el-tag size="mini" type="success">{{ getTaskTypeLabel(task.type) }}</el-tag>
                   </div>
                   <div class="task-info">
@@ -116,7 +116,7 @@
               <div v-else>
                 <div v-for="task in failedTasks" :key="task.id" class="task-item failed">
                   <div class="task-header">
-                    <span class="task-name">{{ task.name }}</span>
+                    <span class="task-name">{{ formatTaskName(task.name) }}</span>
                     <el-tag size="mini" type="danger">{{ getTaskTypeLabel(task.type) }}</el-tag>
                   </div>
                   <div class="task-error">
@@ -150,7 +150,7 @@
               <div v-else>
                 <div v-for="task in cancelledTasks" :key="task.id" class="task-item cancelled">
                   <div class="task-header">
-                    <span class="task-name">{{ task.name }}</span>
+                    <span class="task-name">{{ formatTaskName(task.name) }}</span>
                     <el-tag size="mini" type="warning">{{ getTaskTypeLabel(task.type) }}</el-tag>
                   </div>
                   <div class="task-info">
@@ -428,6 +428,15 @@ export default {
           this.cancellingTaskId = null
         }
       }).catch(() => {})
+    },
+
+    /**
+     * 格式化任务名称，优化版本号显示
+     * 例如："试卷包生成 - 中考英语听力TESTINGV5" -> "试卷包生成 - 中考英语听力TESTING - V5"
+     */
+    formatTaskName(name) {
+      if (!name) return ''
+      return name.replace(/(V\d+)$/, ' - $1')
     }
   }
 }

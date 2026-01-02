@@ -54,7 +54,6 @@ public class PaperBasicInfoBO implements Serializable {
     /**
      * 试卷描述
      */
-    @NotBlank(message = "试卷描述不能为空")
     private String paperDesc;
 
     /**

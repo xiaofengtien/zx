@@ -3,9 +3,8 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const { app } = require('electron')
-
 // 后端API地址
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
+const API_BASE_URL = app.isPackaged ? 'http://47.94.192.7:8818/prod-api' : (process.env.API_BASE_URL || 'http://localhost:8080')
 
 // 文件大小阈值（字节）
 const BLOB_THRESHOLD = 50 * 1024 * 1024 // 50MB
@@ -24,14 +23,14 @@ class PaperService {
   constructor(db) {
     this.db = db.getDB()
     const userDataPath = app.getPath('userData')
-    
+
     // 确保目录存在
     this.packageBasePath = path.join(userDataPath, 'paper_packages')
     this.mediaBasePath = path.join(userDataPath, 'media')
     this.tempBasePath = path.join(userDataPath, 'temp')
-    
+
     this.ensureDirectories()
-    
+
     // 解压结果缓存（LRU策略）
     this.extractCache = new Map() // Map<paperCode, { data, timestamp, size }>
     this.cacheSize = 0
@@ -76,7 +75,7 @@ class PaperService {
       // 判断参数类型：如果是对象，直接使用；如果是字符串，需要获取试卷信息
       let paper
       let paperCode
-      
+
       if (typeof paperCodeOrPaper === 'object' && paperCodeOrPaper !== null) {
         paper = paperCodeOrPaper
         paperCode = paper.paperCode || paper.paper_code
@@ -88,39 +87,34 @@ class PaperService {
           throw new Error(`无法获取试卷信息：${paperCode}`)
         }
       }
-      
+
       if (!paperCode) {
         paperCode = paper.paperCode || paper.paper_code
         if (!paperCode) {
           throw new Error('无法确定试卷编码')
         }
       }
-      
+
       // 确保本地paper表中有该试卷记录
       const localPaper = this.db.prepare(`
         SELECT id FROM paper WHERE paper_code = ? LIMIT 1
       `).get(paperCode)
-      
+
       if (!localPaper && paper && paper.id) {
         try {
           this.db.prepare(`
             INSERT INTO paper 
             (id, paper_name, paper_code, paper_type, paper_desc,
-             year, month, province, custom_name,
              total_score, total_questions, duration,
              version, package_hash, package_size, last_package_time,
              status, create_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             paper.id,
             paper.paperName || paper.paper_name || paperCode,
             paperCode,
             paper.paperType || paper.paper_type || null,
             paper.paperDesc || paper.paper_desc || null,
-            paper.year || null,
-            paper.month || null,
-            paper.province || null,
-            paper.customName || paper.custom_name || null,
             paper.totalScore || paper.total_score || 0,
             paper.totalQuestions || paper.total_questions || 0,
             paper.duration || null,
@@ -135,7 +129,7 @@ class PaperService {
           console.warn(`插入paper表记录失败: ${error.message}`)
         }
       }
-      
+
       // 下载快速启动包
       console.log(`开始下载快速启动包: ${paperCode}, 版本: v${paper.version}`)
       let quickStartResult
@@ -149,7 +143,7 @@ class PaperService {
             if (onProgress) onProgress(Math.floor(progress))
           }
         )
-        
+
         if (quickStartResult && quickStartResult.success) {
           // 解压快速启动包
           console.log(`开始解压快速启动包: ${paperCode}, 版本: v${paper.version}`)
@@ -186,7 +180,7 @@ class PaperService {
         console.warn(`快速启动包下载失败: ${error.message}`)
         quickStartResult = { success: false, message: error.message }
       }
-      
+
       return {
         success: quickStartResult?.success || false,
         message: quickStartResult?.message || '快速启动包同步完成',
@@ -210,7 +204,7 @@ class PaperService {
       // 判断参数类型：如果是对象，直接使用；如果是字符串，需要获取试卷信息
       let paper
       let paperCode
-      
+
       if (typeof paperCodeOrPaper === 'object' && paperCodeOrPaper !== null) {
         // 传入的是试卷对象，直接使用
         paper = paperCodeOrPaper
@@ -224,7 +218,7 @@ class PaperService {
           packageHash: paper.packageHash || paper.package_hash,
           packageSize: paper.packageSize || paper.package_size
         }, null, 2))
-        
+
         // 验证必要字段
         if (!paperCode) {
           throw new Error('传入的试卷对象缺少 paperCode 字段')
@@ -240,7 +234,7 @@ class PaperService {
         // 传入的是试卷编码，需要获取试卷信息
         paperCode = paperCodeOrPaper
         console.log(`开始同步试卷包: ${paperCode}`)
-        
+
         // 1. 获取试卷信息（包含package_hash、version等）
         // 策略：优先从服务器获取最新信息，如果失败则降级到本地缓存（离线模式）
         try {
@@ -251,11 +245,11 @@ class PaperService {
           console.log(`从服务器获取到的试卷信息: 版本=${paper.version}, hash=${paper.packageHash || '无'}`)
         } catch (error) {
           // 如果服务器请求失败（可能是离线），降级到本地缓存
-          if (error.message.includes('网络') || error.message.includes('ECONNREFUSED') || 
-              error.message.includes('timeout') || error.message.includes('ENOTFOUND') ||
-              error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
+          if (error.message.includes('网络') || error.message.includes('ECONNREFUSED') ||
+            error.message.includes('timeout') || error.message.includes('ENOTFOUND') ||
+            error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
             console.warn(`⚠️ 检测到离线状态，降级到使用本地缓存: ${error.message}`)
-            
+
             // 检查本地是否有可用的完整包
             const localPackage = await this.getLocalPackage(paperCode)
             if (localPackage) {
@@ -284,12 +278,12 @@ class PaperService {
             throw error
           }
         }
-        
+
         if (!paper) {
           throw new Error(`试卷不存在: ${paperCode}`)
         }
       }
-      
+
       // 确保 paperCode 存在
       if (!paperCode) {
         paperCode = paper.paperCode || paper.paper_code
@@ -304,32 +298,27 @@ class PaperService {
       const localPaper = this.db.prepare(`
         SELECT id FROM paper WHERE paper_code = ? LIMIT 1
       `).get(paperCode)
-      
+
       if (!localPaper) {
         // 本地没有该试卷记录，需要插入
         console.log(`本地paper表中没有试卷记录，尝试插入新记录: ${paperCode}`)
-        
+
         // 如果paper对象有id（从本地查询返回），直接使用
         if (paper && paper.id) {
           try {
             this.db.prepare(`
               INSERT INTO paper 
               (id, paper_name, paper_code, paper_type, paper_desc,
-               year, month, province, custom_name,
                total_score, total_questions, duration,
                version, package_hash, package_size, last_package_time,
                status, create_time)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
               paper.id,
               paper.paperName || paperCode,
               paperCode,
-              null, // paper_type 暂时为null
+              null, // paper_type
               null, // paper_desc
-              null, // year
-              null, // month
-              null, // province
-              null, // custom_name
               0, // total_score
               0, // total_questions
               null, // duration
@@ -337,7 +326,7 @@ class PaperService {
               paper.packageHash || null,
               paper.packageSize || null,
               null, // last_package_time
-              1, // status = 1 (启用)
+              1, // status = 1
               Date.now()
             )
             console.log(`✓ 已插入paper表记录: ${paperCode} (ID: ${paper.id})`)
@@ -361,32 +350,27 @@ class PaperService {
                 }
               }
             )
-            
+
             if (response.data && response.data.code === 200 && response.data.rows) {
-              const fullPaper = response.data.rows.find(p => 
+              const fullPaper = response.data.rows.find(p =>
                 (p.paperCode || p.paper_code) === paperCode
               )
-              
+
               if (fullPaper && fullPaper.id) {
-                // 插入paper表记录（包含year, month, province, custom_name字段）
+                // 插入paper表记录
                 this.db.prepare(`
                   INSERT INTO paper 
                   (id, paper_name, paper_code, paper_type, paper_desc,
-                   year, month, province, custom_name,
                    total_score, total_questions, duration,
                    version, package_hash, package_size, last_package_time,
                    status, create_time)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `).run(
                   fullPaper.id,
                   fullPaper.paperName || fullPaper.paper_name || paperCode,
                   paperCode,
                   fullPaper.paperType || fullPaper.paper_type || null,
                   fullPaper.paperDesc || fullPaper.paper_desc || null,
-                  fullPaper.year || null,
-                  fullPaper.month || null,
-                  fullPaper.province || null,
-                  fullPaper.customName || fullPaper.custom_name || null,
                   fullPaper.totalScore || fullPaper.total_score || 0,
                   fullPaper.totalQuestions || fullPaper.total_questions || 0,
                   fullPaper.duration || null,
@@ -397,7 +381,7 @@ class PaperService {
                   1, // status = 1 (启用)
                   Date.now()
                 )
-                console.log(`✓ 已插入paper表记录: ${paperCode} (ID: ${fullPaper.id}, 年月: ${fullPaper.year || '无'}年${fullPaper.month ? fullPaper.month + '月' : ''}, 省份: ${fullPaper.province || '无'})`)
+                console.log(`✓ 已插入paper表记录: ${paperCode} (ID: ${fullPaper.id})`)
               } else {
                 console.warn(`⚠️ 从服务器获取的试卷列表中未找到 ${paperCode}，可能无法插入paper表记录`)
                 // 如果找不到，依赖syncZipPackages中已经插入的记录
@@ -424,7 +408,7 @@ class PaperService {
       // 逻辑：联网状态优先下载，然后对比本地，如果版本一致则不更新
       let quickStartResult
       const quickStartExists = await this.checkQuickStartPackageExists(paper.id)
-      
+
       if (quickStartExists) {
         console.log(`快速启动包已存在，跳过下载: ${paperCode}, 版本: v${paper.version}`)
         // 确保快速启动包已解压
@@ -477,7 +461,7 @@ class PaperService {
               if (onProgress) onProgress(Math.floor(progress * 0.5))
             }
           )
-        
+
           if (quickStartResult && quickStartResult.success) {
             // 解压快速启动包（只解压manifest.json和trial_listen/、intro/等）
             // 无论快速启动包是新下载的还是已存在的，都需要确保已解压
@@ -524,21 +508,21 @@ class PaperService {
 
       // 5. 检查本地是否已有完整ZIP包（智能版本检查）
       const localPackage = await this.getLocalPackage(paperCode)
-      
+
       if (localPackage) {
         const localVersion = localPackage.version || 0
         const remoteVersion = paper.version || 0
         const localHash = localPackage.package_hash
         const remoteHash = paper.packageHash
-        
+
         console.log(`[syncPaperPackage] 本地包信息: v${localVersion}, hash=${localHash}`)
         console.log(`[syncPaperPackage] 远程包信息: v${remoteVersion}, hash=${remoteHash}`)
-        
+
         // 检查文件是否真的存在
         const packageFileName = `${paperCode}_v${localVersion}.zip`
         const packagePath = path.join(this.packageBasePath, packageFileName)
         const fileExists = fs.existsSync(packagePath)
-        
+
         if (!fileExists) {
           console.warn(`[syncPaperPackage] ⚠️ 数据库有记录但文件不存在，删除记录并重新下载: ${packagePath}`)
           // 删除数据库记录
@@ -584,7 +568,7 @@ class PaperService {
         } else {
           // 本地版本低于远程版本，需要更新
           console.log(`[syncPaperPackage] 检测到新版本，需要更新: 本地v${localVersion} -> 远程v${remoteVersion}`)
-          
+
           // 注意：不要在这里删除旧版本，等新版本下载成功后再删除
           // 这样可以确保在新版本下载失败时，旧版本仍然可用
           console.log(`[syncPaperPackage] ⚠️ 暂不删除旧版本v${localVersion}，等v${remoteVersion}下载成功后再删除`)
@@ -599,7 +583,7 @@ class PaperService {
       let downloadResult
       let retryCount = 0
       const maxRetries = 2 // 最多重试2次
-      
+
       // 后台下载，不阻塞
       const downloadFullPackage = async () => {
         while (retryCount <= maxRetries) {
@@ -609,7 +593,7 @@ class PaperService {
               console.log(`第 ${retryCount} 次重试，重新获取试卷信息...`)
               // 等待3秒，给后端时间重新生成
               await new Promise(resolve => setTimeout(resolve, 3000))
-              
+
               // 强制从服务器获取最新信息（不使用本地缓存）
               const updatedPaper = await this.getPaperInfo(paperCode, token, true)
               if (updatedPaper) {
@@ -619,7 +603,7 @@ class PaperService {
                 console.log(`重新获取的试卷信息:`)
                 console.log(`  版本: ${oldVersion} -> ${paper.version}`)
                 console.log(`  hash: ${oldHash || '无'} -> ${paper.packageHash || '无'}`)
-                
+
                 // 如果版本或hash已更新，说明后端已经重新生成
                 if (paper.version !== oldVersion || paper.packageHash !== oldHash) {
                   console.log(`✓ 检测到试卷包已更新，使用新的hash进行验证`)
@@ -630,7 +614,7 @@ class PaperService {
                 console.warn(`重新获取试卷信息失败，使用旧的试卷信息重试`)
               }
             }
-            
+
             downloadResult = await this.downloadPaperPackage(
               paper.id,
               paperCode,
@@ -647,7 +631,7 @@ class PaperService {
               // 解压完整ZIP包
               console.log(`开始解压完整ZIP包: ${paperCode}`)
               await this.extractPaperPackage(paperCode, paper.version)
-              
+
               // 验证完整包是否已保存到 paper_package 表
               const verifyPackage = this.db.prepare(`
                 SELECT paper_code, version, is_active FROM paper_package 
@@ -655,36 +639,36 @@ class PaperService {
                 ORDER BY version DESC
                 LIMIT 1
               `).get(paperCode)
-              
+
               if (verifyPackage) {
                 console.log(`✓ 验证：完整包已保存到 paper_package 表，paper_code=${verifyPackage.paper_code}, version=${verifyPackage.version}`)
               } else {
                 console.warn(`⚠️ 警告：完整包下载成功但未在 paper_package 表中找到，paper_code=${paperCode}`)
                 console.warn(`   这可能是因为保存逻辑出错，请检查 downloadPaperPackage 方法的实现`)
               }
-              
+
               // 新版本下载成功，删除所有旧版本的完整包
               await this.deleteAllOldVersions(paperCode, paper.version)
-              
+
               break // 下载成功，退出循环
             }
-            
+
             // 如果是hash验证失败或文件太小，且还有重试次数，继续重试
-            if (downloadResult.message && 
-                (downloadResult.message.includes('hash验证失败') || downloadResult.message.includes('文件太小')) && 
-                retryCount < maxRetries) {
+            if (downloadResult.message &&
+              (downloadResult.message.includes('hash验证失败') || downloadResult.message.includes('文件太小')) &&
+              retryCount < maxRetries) {
               console.warn(`下载失败: ${downloadResult.message}`)
               console.warn(`等待后端重新生成后重试（第 ${retryCount + 1} 次）...`)
               retryCount++
               continue
             }
-            
+
             throw new Error(downloadResult.message || '下载失败')
           } catch (error) {
             // 如果是hash验证失败或文件太小，且还有重试次数，继续重试
-            if (error.message && 
-                (error.message.includes('hash验证失败') || error.message.includes('文件太小')) && 
-                retryCount < maxRetries) {
+            if (error.message &&
+              (error.message.includes('hash验证失败') || error.message.includes('文件太小')) &&
+              retryCount < maxRetries) {
               console.warn(`下载失败: ${error.message}`)
               console.warn(`等待后端重新生成后重试（第 ${retryCount + 1} 次）...`)
               retryCount++
@@ -694,7 +678,7 @@ class PaperService {
           }
         }
       }
-      
+
       // 启动后台下载（不等待完成）
       downloadFullPackage()
         .then(() => {
@@ -705,7 +689,7 @@ class PaperService {
           // 更新下载状态为失败
           this.updateDownloadStatus(paper.id, paperCode, 'error', 0, 0, 0, error.message)
         })
-      
+
       return {
         success: true,
         message: '快速启动包已下载，完整包正在后台下载',
@@ -756,7 +740,7 @@ class PaperService {
 
       // 从服务器获取试卷列表并查找（总是获取最新信息）
       console.log(`从服务器获取试卷信息: ${paperCode}${forceRefresh ? ' (强制刷新)' : ''}`)
-      
+
       // 注意：这里应该使用 /student/sync/paper/listByIds 接口，但我们需要先知道试卷ID
       // 由于我们只有 paperCode，需要先通过 /student/sync/paper/list 接口查询
       // 或者，我们可以直接从 syncZipPackages 传入的 papers 列表中查找
@@ -793,12 +777,12 @@ class PaperService {
       if (paperList && paperList.length > 0) {
         console.log(`服务器返回的试卷列表数量: ${paperList.length}`)
         console.log(`试卷列表中的编码:`, paperList.map(p => p.paperCode || p.paper_code || '无').join(', '))
-        
+
         // 从试卷列表中查找匹配的paperCode
-        const paper = paperList.find(p => 
+        const paper = paperList.find(p =>
           (p.paperCode || p.paper_code) === paperCode
         )
-        
+
         if (paper) {
           const paperInfo = {
             id: paper.id,
@@ -808,14 +792,14 @@ class PaperService {
             packageHash: paper.packageHash || paper.package_hash,
             packageSize: paper.packageSize || paper.package_size
           }
-          
+
           console.log(`从服务器获取的试卷信息: 版本=${paperInfo.version}, hash=${paperInfo.packageHash || '无'}`)
-          
+
           // 更新本地数据库（如果本地有记录）
           const localPaper = this.db.prepare(`
             SELECT id FROM paper WHERE paper_code = ? AND status = 1
           `).get(paperCode)
-          
+
           if (localPaper) {
             this.db.prepare(`
               UPDATE paper 
@@ -829,7 +813,7 @@ class PaperService {
             )
             console.log(`已更新本地数据库中的试卷信息`)
           }
-          
+
           return paperInfo
         } else {
           // 未找到匹配的试卷
@@ -847,7 +831,7 @@ class PaperService {
       if (forceRefresh) {
         console.warn(`从服务器获取试卷信息失败: ${error.message}`)
         console.warn(`降级到使用本地SQLite中的试卷信息（离线模式）`)
-        
+
         // 尝试从本地SQLite获取
         const localPaper = this.db.prepare(`
           SELECT id, paper_code, paper_name, version, package_hash, package_size
@@ -920,14 +904,14 @@ class PaperService {
         const stats = fs.statSync(quickStartPath)
         if (stats.size > 0) {
           console.log(`快速启动包已存在，跳过下载: ${quickStartFileName}`)
-          
+
           // 确保快速启动包已保存到 paper_package 表
           const quickPaperCode = `${paperCode}_quick`
           const relativePath = path.relative(app.getPath('userData'), quickStartPath)
           const fileBuffer = fs.readFileSync(quickStartPath)
           const quickHash = this.calculateHash(fileBuffer)
           const syncTime = Date.now()
-          
+
           try {
             // 先禁用旧版本的记录（如果有）
             this.db.prepare(`
@@ -935,13 +919,13 @@ class PaperService {
               SET is_active = 0
               WHERE paper_id = ? AND paper_code = ? AND is_active = 1
             `).run(paperId, quickPaperCode)
-            
+
             // 检查是否已存在相同版本的记录
             const existingRecord = this.db.prepare(`
               SELECT id FROM paper_package
               WHERE paper_id = ? AND paper_code = ? AND version = ?
             `).get(paperId, quickPaperCode, version)
-            
+
             if (existingRecord) {
               // 更新现有记录
               this.db.prepare(`
@@ -983,7 +967,7 @@ class PaperService {
                     DELETE FROM paper_package
                     WHERE paper_id = ? AND paper_code = ?
                   `).run(paperId, quickPaperCode)
-                  
+
                   // 重新插入
                   this.db.prepare(`
                     INSERT INTO paper_package 
@@ -1010,7 +994,7 @@ class PaperService {
             console.error(`paper_id=${paperId}, paper_code=${quickPaperCode}, version=${version}`)
             // 不抛出错误，因为文件已存在，只是数据库记录失败
           }
-          
+
           if (onProgress) onProgress(100)
           return {
             success: true,
@@ -1042,15 +1026,15 @@ class PaperService {
               totalSize = progressEvent.total
               downloadedSize = progressEvent.loaded
               const progress = Math.floor((downloadedSize / totalSize) * 100)
-              
+
               // 更新数据库中的下载状态
               this.updateDownloadStatus(paperId, paperCode, 'downloading', progress, downloadedSize, totalSize)
-              
+
               // 调用进度回调
               if (onProgress) {
                 onProgress(progress)
               }
-              
+
               // 每10%或每1MB更新一次日志
               if (progress % 10 === 0 || downloadedSize % (1024 * 1024) < 100 * 1024) {
                 console.log(`快速启动包 ${paperCode} 下载进度: ${progress}% (${(downloadedSize / 1024 / 1024).toFixed(2)}MB / ${(totalSize / 1024 / 1024).toFixed(2)}MB)`)
@@ -1083,7 +1067,7 @@ class PaperService {
       const relativePath = path.relative(app.getPath('userData'), quickStartPath)
       const quickHash = this.calculateHash(Buffer.from(response.data))
       const syncTime = Date.now()
-      
+
       try {
         // 先禁用旧版本的记录（如果有）
         this.db.prepare(`
@@ -1091,13 +1075,13 @@ class PaperService {
           SET is_active = 0
           WHERE paper_id = ? AND paper_code = ? AND is_active = 1
         `).run(paperId, quickPaperCode)
-        
+
         // 检查是否已存在相同版本的记录
         const existingRecord = this.db.prepare(`
           SELECT id FROM paper_package
           WHERE paper_id = ? AND paper_code = ? AND version = ?
         `).get(paperId, quickPaperCode, version)
-        
+
         if (existingRecord) {
           // 更新现有记录
           this.db.prepare(`
@@ -1131,13 +1115,13 @@ class PaperService {
           )
           console.log(`✓ 已插入快速启动包到 paper_package 表: paper_id=${paperId}, paper_code=${quickPaperCode}, version=${version}`)
         }
-        
+
         // 验证记录是否已保存到 paper_package 表
         const verifyRecord = this.db.prepare(`
           SELECT id, paper_code, version, is_active FROM paper_package
           WHERE paper_id = ? AND paper_code = ? AND version = ?
         `).get(paperId, quickPaperCode, version)
-        
+
         if (verifyRecord) {
           console.log(`✓ 验证：快速启动包已保存到 paper_package 表，id=${verifyRecord.id}, paper_code=${verifyRecord.paper_code}, version=${verifyRecord.version}, is_active=${verifyRecord.is_active}`)
         } else {
@@ -1199,7 +1183,7 @@ class PaperService {
       // 从服务器下载ZIP包
       console.log(`[downloadPaperPackage] 开始下载完整包: paperId=${paperId}, paperCode=${paperCode}, version=${version}`)
       console.log(`[downloadPaperPackage] API URL: ${API_BASE_URL}/student/sync/paper/package/download`)
-      
+
       let response
       try {
         response = await axios.post(
@@ -1215,7 +1199,7 @@ class PaperService {
             validateStatus: (status) => status < 500 // 允许4xx状态码，以便检查错误
           }
         )
-        
+
         // 打印所有响应头
         console.log(`[downloadPaperPackage] 响应状态码: ${response.status}`)
         console.log(`[downloadPaperPackage] 响应头:`, JSON.stringify(response.headers, null, 2))
@@ -1250,10 +1234,10 @@ class PaperService {
       console.log(`ZIP包大小: ${(totalSize / 1024 / 1024).toFixed(2)}MB (${totalSize} 字节)`)
       console.log(`响应Content-Type: ${response.headers['content-type']}`)
       console.log(`响应状态码: ${response.status}`)
-      
+
       // 如果大小为0，尝试通过HEAD请求获取文件大小，或使用默认策略
       if (totalSize === 0) {
-        console.warn('⚠️ Content-Length为0，尝试通过HEAD请求获取文件大小')
+        console.warn('[PaperDownload] ⚠ Content-Length为0，尝试通过HEAD请求获取文件大小')
         try {
           // 尝试HEAD请求获取文件大小（某些服务器在流式响应时不返回Content-Length）
           const headResponse = await axios.head(
@@ -1270,10 +1254,10 @@ class PaperService {
         } catch (headError) {
           console.warn('HEAD请求失败:', headError.message)
         }
-        
+
         // 如果仍然是0，使用文件系统下载（会自动处理未知大小）
         if (totalSize === 0) {
-          console.warn('⚠️ 无法获取文件大小，使用文件系统下载策略（未知大小模式）')
+          console.warn('[PaperDownload] ⚠ 无法获取文件大小，使用文件系统下载策略（未知大小模式）')
           // 设置一个标记，后续使用文件系统下载策略
           totalSize = -1 // -1 表示未知大小，后续会特殊处理
         }
@@ -1281,7 +1265,7 @@ class PaperService {
 
       // 初始化下载状态
       this.updateDownloadStatus(paperId, paperCode, 'downloading', 0, 0, Math.max(0, totalSize))
-      
+
       // 根据文件大小选择存储方式和下载策略
       // 优化：50MB以上使用分片下载，提高下载速度
       let result
@@ -1290,9 +1274,6 @@ class PaperService {
           // 未知大小：使用文件系统下载（流式写入，不需要预知大小）
           console.log('使用文件系统下载策略（未知大小模式）')
           result = await this.downloadToFileSystemUnknownSize(response.data, packagePath, paperCode, version, expectedHash, onProgress, paperId)
-        } else if (totalSize < BLOB_THRESHOLD) {
-          // 小文件（<50MB）：直接下载到内存，存储为BLOB
-          result = await this.downloadAsBlob(response.data, paperCode, version, expectedHash, totalSize, onProgress)
         } else if (totalSize < 50 * 1024 * 1024) {
           // 中等文件（50MB以下）：下载到文件系统（串行）
           result = await this.downloadToFileSystem(response.data, packagePath, paperCode, version, expectedHash, totalSize, onProgress)
@@ -1300,7 +1281,7 @@ class PaperService {
           // 大文件（>=50MB）：使用分片下载（并发，更快，支持断点续传）
           result = await this.downloadWithFragments(paperId, paperCode, version, expectedHash, token, totalSize, onProgress)
         }
-        
+
         // 下载成功，更新状态
         this.updateDownloadStatus(paperId, paperCode, 'completed', 100, totalSize, totalSize)
         return result
@@ -1328,7 +1309,7 @@ class PaperService {
         SELECT id FROM paper WHERE paper_code = ? LIMIT 1
       `).get(paperCode)
       const paperId = paper ? paper.id : null
-      
+
       stream.on('data', (chunk) => {
         chunks.push(chunk)
         receivedSize += chunk.length
@@ -1346,14 +1327,14 @@ class PaperService {
       stream.on('end', async () => {
         try {
           const buffer = Buffer.concat(chunks)
-          
+
           console.log(`下载完成，实际接收大小: ${buffer.length} 字节`)
-          
+
           // 检查文件大小
           if (buffer.length === 0) {
             throw new Error('下载的ZIP包为空')
           }
-          
+
           // 检查ZIP文件头（PK开头）
           if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
             // 可能是错误响应，尝试解析为文本
@@ -1363,24 +1344,24 @@ class PaperService {
             console.error('下载的buffer前10字节:', Array.from(buffer.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '))
             throw new Error(`下载的内容不是ZIP文件，可能是错误信息: ${errorText.substring(0, 200)}`)
           }
-          
+
           console.log(`ZIP文件头验证通过，文件大小: ${buffer.length} 字节`)
-          
+
           // 验证hash（如果提供了expectedHash）
           const actualHash = this.calculateHash(buffer)
           console.log(`计算出的hash: ${actualHash}`)
           console.log(`期望的hash: ${expectedHash || '无'}`)
-          
+
           if (expectedHash && actualHash !== expectedHash) {
             console.error(`ZIP包hash验证失败: 期望 ${expectedHash}, 实际 ${actualHash}`)
             console.error(`ZIP包大小: ${buffer.length} 字节`)
-            
+
             // 检查是否是错误响应
             const errorText = buffer.toString('utf8', 0, Math.min(500, buffer.length))
             if (errorText.includes('错误') || errorText.includes('失败') || errorText.includes('Exception') || errorText.includes('error')) {
               throw new Error(`服务器返回错误: ${errorText.substring(0, 200)}`)
             }
-            
+
             // hash验证失败
             // 可能原因：
             // 1) OSS上的文件已更新但数据库未更新（后端会自动重新生成）
@@ -1393,7 +1374,7 @@ class PaperService {
             console.error(`实际hash (客户端计算): ${actualHash}`)
             console.error(`hash算法: SHA-256`)
             console.error(`hash长度: 期望=${expectedHash.length}, 实际=${actualHash.length}`)
-            
+
             // 验证hash算法格式（应该是64个十六进制字符）
             if (actualHash.length !== 64) {
               console.error(`实际hash长度不正确: ${actualHash.length}，应该是64`)
@@ -1403,7 +1384,7 @@ class PaperService {
               console.error(`期望hash长度不正确: ${expectedHash.length}，应该是64`)
               throw new Error(`数据库中的hash格式错误: hash长度不正确`)
             }
-            
+
             // 验证hash字符格式（应该是小写十六进制）
             const hexPattern = /^[0-9a-f]{64}$/
             if (!hexPattern.test(actualHash)) {
@@ -1414,14 +1395,14 @@ class PaperService {
               console.error(`期望hash格式不正确: ${expectedHash}`)
               throw new Error(`数据库中的hash格式错误: hash格式不正确`)
             }
-            
+
             // hash算法和格式都正确，但不匹配
             // 说明：1) 文件内容确实不同 2) 需要后端重新生成
             console.error(`hash算法和格式验证通过，但hash值不匹配`)
             console.error(`可能原因：1) OSS上的文件与数据库记录不一致 2) 文件在传输过程中损坏`)
             throw new Error(`ZIP包hash验证失败: 期望 ${expectedHash}, 实际 ${actualHash}`)
           }
-          
+
           // 确定最终使用的hash
           // 如果hash匹配，使用期望的hash
           // 如果没有期望hash，使用实际hash
@@ -1431,11 +1412,11 @@ class PaperService {
           const paperRecord = this.db.prepare(`
             SELECT id FROM paper WHERE paper_code = ? LIMIT 1
           `).get(paperCode)
-          
+
           if (!paperRecord || !paperRecord.id) {
             throw new Error(`本地paper表中没有找到试卷记录: ${paperCode}，无法保存paper_package（paper_id不能为null）`)
           }
-          
+
           // 保存到SQLite
           // 先禁用旧版本的记录（如果有，只禁用完整包的记录，不包括快速包）
           this.db.prepare(`
@@ -1443,15 +1424,15 @@ class PaperService {
             SET is_active = 0
             WHERE paper_id = ? AND paper_code = ? AND is_active = 1
           `).run(paperRecord.id, paperCode)
-          
+
           // 检查是否已存在相同版本的记录
           const existingRecord = this.db.prepare(`
             SELECT id FROM paper_package
             WHERE paper_id = ? AND paper_code = ? AND version = ?
           `).get(paperRecord.id, paperCode, version)
-          
+
           const syncTime = Date.now()
-          
+
           try {
             if (existingRecord) {
               // 更新现有记录
@@ -1496,7 +1477,7 @@ class PaperService {
                     DELETE FROM paper_package
                     WHERE paper_id = ? AND paper_code = ?
                   `).run(paperRecord.id, paperCode)
-                  
+
                   // 重新插入
                   this.db.prepare(`
                     INSERT INTO paper_package 
@@ -1526,25 +1507,25 @@ class PaperService {
           }
 
           console.log(`✓ ZIP包已保存为BLOB: ${paperCode}, 大小: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`)
-          
+
           // 验证记录是否已保存到 paper_package 表
           const verifyRecord = this.db.prepare(`
             SELECT id, paper_code, version, is_active FROM paper_package
             WHERE paper_id = ? AND paper_code = ? AND version = ?
           `).get(paperRecord.id, paperCode, version)
-          
+
           if (verifyRecord) {
             console.log(`✓ 验证：完整包已保存到 paper_package 表，id=${verifyRecord.id}, paper_code=${verifyRecord.paper_code}, version=${verifyRecord.version}, is_active=${verifyRecord.is_active}`)
           } else {
             console.error(`❌ 错误：完整包保存后验证失败，paper_package 表中未找到记录！`)
             console.error(`   paper_id=${paperRecord.id}, paper_code=${paperCode}, version=${version}`)
           }
-          
+
           // 更新下载状态（使用已查询的paperRecord）
           if (paperRecord && paperRecord.id) {
             this.updateDownloadStatus(paperRecord.id, paperCode, 'completed', 100, buffer.length, buffer.length)
           }
-          
+
           resolve({
             success: true,
             storageType: 'blob',
@@ -1570,7 +1551,7 @@ class PaperService {
         SELECT id FROM paper WHERE paper_code = ? LIMIT 1
       `).get(paperCode)
       const paperId = paper ? paper.id : null
-      
+
       const writeStream = fs.createWriteStream(filePath)
       let receivedSize = 0
 
@@ -1591,19 +1572,19 @@ class PaperService {
       stream.on('end', async () => {
         try {
           writeStream.end()
-          
+
           // 等待文件写入完成
           await new Promise((resolve) => writeStream.on('close', resolve))
 
           // 验证hash（如果提供了expectedHash）
           const buffer = fs.readFileSync(filePath)
-          
+
           // 检查文件大小
           if (buffer.length === 0) {
             fs.unlinkSync(filePath)
             throw new Error('下载的ZIP包为空')
           }
-          
+
           // 检查ZIP文件头（PK开头）
           if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
             fs.unlinkSync(filePath)
@@ -1612,7 +1593,7 @@ class PaperService {
             console.error('下载的内容不是ZIP文件，前500字节:', errorText)
             throw new Error(`下载的内容不是ZIP文件，可能是错误信息: ${errorText.substring(0, 200)}`)
           }
-          
+
           const actualHash = this.calculateHash(buffer)
           if (expectedHash && actualHash !== expectedHash) {
             fs.unlinkSync(filePath)
@@ -1625,129 +1606,129 @@ class PaperService {
             }
             throw new Error(`ZIP包hash验证失败: 期望 ${expectedHash}, 实际 ${actualHash}`)
           }
-          
+
           // 如果没有提供expectedHash，使用计算出的hash
           const finalHash = expectedHash || actualHash
 
-      // 获取paper_id（必须存在，否则会报NOT NULL约束错误）
-      const paperRecordForFileSystem = this.db.prepare(`
+          // 获取paper_id（必须存在，否则会报NOT NULL约束错误）
+          const paperRecordForFileSystem = this.db.prepare(`
         SELECT id FROM paper WHERE paper_code = ? LIMIT 1
       `).get(paperCode)
-      
-      if (!paperRecordForFileSystem || !paperRecordForFileSystem.id) {
-        throw new Error(`本地paper表中没有找到试卷记录: ${paperCode}，无法保存paper_package（paper_id不能为null）`)
-      }
-      
-      // 保存路径到SQLite
-      // 先禁用旧版本的记录（如果有，只禁用完整包的记录，不包括快速包）
-      this.db.prepare(`
+
+          if (!paperRecordForFileSystem || !paperRecordForFileSystem.id) {
+            throw new Error(`本地paper表中没有找到试卷记录: ${paperCode}，无法保存paper_package（paper_id不能为null）`)
+          }
+
+          // 保存路径到SQLite
+          // 先禁用旧版本的记录（如果有，只禁用完整包的记录，不包括快速包）
+          this.db.prepare(`
         UPDATE paper_package
         SET is_active = 0
         WHERE paper_id = ? AND paper_code = ? AND is_active = 1
       `).run(paperRecordForFileSystem.id, paperCode)
-      
-      // 检查是否已存在相同版本的记录
-      const existingRecord = this.db.prepare(`
+
+          // 检查是否已存在相同版本的记录
+          const existingRecord = this.db.prepare(`
         SELECT id FROM paper_package
         WHERE paper_id = ? AND paper_code = ? AND version = ?
       `).get(paperRecordForFileSystem.id, paperCode, version)
-      
-      const relativePath = path.relative(app.getPath('userData'), filePath)
-      const syncTime = Date.now()
-      
-      try {
-        if (existingRecord) {
-          // 更新现有记录
-          this.db.prepare(`
+
+          const relativePath = path.relative(app.getPath('userData'), filePath)
+          const syncTime = Date.now()
+
+          try {
+            if (existingRecord) {
+              // 更新现有记录
+              this.db.prepare(`
             UPDATE paper_package
             SET package_path = ?, package_hash = ?, package_size = ?,
                 storage_type = 1, sync_time = ?, is_active = 1
             WHERE id = ?
           `).run(
-            relativePath,
-            finalHash,
-            buffer.length,
-            syncTime,
-            existingRecord.id
-          )
-          console.log(`✓ 已更新完整包到 paper_package 表: paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
-        } else {
-          // 插入新记录
-          // 注意：如果表还有 UNIQUE 约束，需要先删除旧记录
-          // 但迁移脚本应该已经去掉了 UNIQUE 约束，所以可以直接插入
-          try {
-            this.db.prepare(`
+                relativePath,
+                finalHash,
+                buffer.length,
+                syncTime,
+                existingRecord.id
+              )
+              console.log(`✓ 已更新完整包到 paper_package 表: paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
+            } else {
+              // 插入新记录
+              // 注意：如果表还有 UNIQUE 约束，需要先删除旧记录
+              // 但迁移脚本应该已经去掉了 UNIQUE 约束，所以可以直接插入
+              try {
+                this.db.prepare(`
               INSERT INTO paper_package 
               (paper_id, paper_code, package_path, package_hash, package_size, 
                storage_type, version, sync_time, is_active)
               VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1)
             `).run(
-              paperRecordForFileSystem.id,
-              paperCode,
-              relativePath,
-              finalHash,
-              buffer.length,
-              version,
-              syncTime
-            )
-            console.log(`✓ 已插入完整包到 paper_package 表: paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
-          } catch (insertError) {
-            // 如果插入失败（可能是 UNIQUE 约束），先删除旧记录再插入
-            if (insertError.message && insertError.message.includes('UNIQUE')) {
-              console.warn(`插入失败（UNIQUE约束），先删除旧记录: ${insertError.message}`)
-              this.db.prepare(`
+                  paperRecordForFileSystem.id,
+                  paperCode,
+                  relativePath,
+                  finalHash,
+                  buffer.length,
+                  version,
+                  syncTime
+                )
+                console.log(`✓ 已插入完整包到 paper_package 表: paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
+              } catch (insertError) {
+                // 如果插入失败（可能是 UNIQUE 约束），先删除旧记录再插入
+                if (insertError.message && insertError.message.includes('UNIQUE')) {
+                  console.warn(`插入失败（UNIQUE约束），先删除旧记录: ${insertError.message}`)
+                  this.db.prepare(`
                 DELETE FROM paper_package
                 WHERE paper_id = ? AND paper_code = ?
               `).run(paperRecordForFileSystem.id, paperCode)
-              
-              // 重新插入
-              this.db.prepare(`
+
+                  // 重新插入
+                  this.db.prepare(`
                 INSERT INTO paper_package 
                 (paper_id, paper_code, package_path, package_hash, package_size, 
                  storage_type, version, sync_time, is_active)
                 VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1)
               `).run(
-                paperRecordForFileSystem.id,
-                paperCode,
-                relativePath,
-                finalHash,
-                buffer.length,
-                version,
-                syncTime
-              )
-              console.log(`✓ 已插入完整包到 paper_package 表（删除旧记录后）: paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
-            } else {
-              throw insertError
+                    paperRecordForFileSystem.id,
+                    paperCode,
+                    relativePath,
+                    finalHash,
+                    buffer.length,
+                    version,
+                    syncTime
+                  )
+                  console.log(`✓ 已插入完整包到 paper_package 表（删除旧记录后）: paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
+                } else {
+                  throw insertError
+                }
+              }
             }
+          } catch (error) {
+            console.error(`保存完整包到 paper_package 表失败:`, error)
+            console.error(`paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
+            console.error(`错误详情:`, error.message)
+            throw error
           }
-        }
-      } catch (error) {
-        console.error(`保存完整包到 paper_package 表失败:`, error)
-        console.error(`paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
-        console.error(`错误详情:`, error.message)
-        throw error
-      }
 
-      console.log(`✓ ZIP包已保存到文件系统: ${filePath}, 大小: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`)
-      
-      // 验证记录是否已保存到 paper_package 表
-      const verifyRecord = this.db.prepare(`
+          console.log(`✓ ZIP包已保存到文件系统: ${filePath}, 大小: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`)
+
+          // 验证记录是否已保存到 paper_package 表
+          const verifyRecord = this.db.prepare(`
         SELECT id, paper_code, version, is_active FROM paper_package
         WHERE paper_id = ? AND paper_code = ? AND version = ?
       `).get(paperRecordForFileSystem.id, paperCode, version)
-      
-      if (verifyRecord) {
-        console.log(`✓ 验证：完整包已保存到 paper_package 表，id=${verifyRecord.id}, paper_code=${verifyRecord.paper_code}, version=${verifyRecord.version}, is_active=${verifyRecord.is_active}`)
-      } else {
-        console.error(`❌ 错误：完整包保存后验证失败，paper_package 表中未找到记录！`)
-        console.error(`   paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
-      }
-      
-      // 更新下载状态（使用已查询的paperRecordForFileSystem）
-      if (paperRecordForFileSystem && paperRecordForFileSystem.id) {
-        this.updateDownloadStatus(paperRecordForFileSystem.id, paperCode, 'completed', 100, buffer.length, buffer.length)
-      }
-          
+
+          if (verifyRecord) {
+            console.log(`✓ 验证：完整包已保存到 paper_package 表，id=${verifyRecord.id}, paper_code=${verifyRecord.paper_code}, version=${verifyRecord.version}, is_active=${verifyRecord.is_active}`)
+          } else {
+            console.error(`❌ 错误：完整包保存后验证失败，paper_package 表中未找到记录！`)
+            console.error(`   paper_id=${paperRecordForFileSystem.id}, paper_code=${paperCode}, version=${version}`)
+          }
+
+          // 更新下载状态（使用已查询的paperRecordForFileSystem）
+          if (paperRecordForFileSystem && paperRecordForFileSystem.id) {
+            this.updateDownloadStatus(paperRecordForFileSystem.id, paperCode, 'completed', 100, buffer.length, buffer.length)
+          }
+
           resolve({
             success: true,
             storageType: 'filesystem',
@@ -1783,18 +1764,18 @@ class PaperService {
       stream.on('data', (chunk) => {
         writeStream.write(chunk)
         receivedSize += chunk.length
-        
+
         // 每收到 1MB 数据更新一次进度（避免频繁更新）
         if (receivedSize - lastProgressUpdate > 1024 * 1024) {
           lastProgressUpdate = receivedSize
           const sizeMB = (receivedSize / 1024 / 1024).toFixed(2)
           console.log(`下载中... 已接收: ${sizeMB}MB`)
-          
+
           // 更新下载状态（大小未知，进度无法计算，只更新已下载大小）
           if (paperId) {
             this.updateDownloadStatus(paperId, paperCode, 'downloading', 0, receivedSize, 0)
           }
-          
+
           // 进度回调（无法计算百分比，只通知已下载大小）
           if (onProgress) {
             onProgress(-1, receivedSize) // -1 表示进度未知
@@ -1805,22 +1786,22 @@ class PaperService {
       stream.on('end', async () => {
         try {
           writeStream.end()
-          
+
           // 等待文件写入完成
           await new Promise((resolve) => writeStream.on('close', resolve))
-          
+
           console.log(`下载完成，实际接收大小: ${(receivedSize / 1024 / 1024).toFixed(2)}MB (${receivedSize} 字节)`)
 
           // 验证hash（如果提供了expectedHash）
           const buffer = fs.readFileSync(filePath)
-          
+
           // 检查文件大小
           if (buffer.length === 0) {
             fs.unlinkSync(filePath)
             reject(new Error('下载的ZIP包为空'))
             return
           }
-          
+
           // 检查ZIP文件头（PK开头）
           if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
             fs.unlinkSync(filePath)
@@ -1829,7 +1810,7 @@ class PaperService {
             reject(new Error(`下载的内容不是ZIP文件，可能是错误信息: ${errorText.substring(0, 200)}`))
             return
           }
-          
+
           const actualHash = this.calculateHash(buffer)
           if (expectedHash && actualHash !== expectedHash) {
             fs.unlinkSync(filePath)
@@ -1837,33 +1818,33 @@ class PaperService {
             reject(new Error(`ZIP包hash验证失败: 期望 ${expectedHash}, 实际 ${actualHash}`))
             return
           }
-          
+
           const finalHash = expectedHash || actualHash
 
           // 获取paper_id
           const paperRecord = this.db.prepare(`
             SELECT id FROM paper WHERE paper_code = ? LIMIT 1
           `).get(paperCode)
-          
+
           if (!paperRecord || !paperRecord.id) {
             reject(new Error(`本地paper表中没有找到试卷记录: ${paperCode}`))
             return
           }
-          
+
           // 保存到 paper_package 表
           this.db.prepare(`
             UPDATE paper_package SET is_active = 0
             WHERE paper_id = ? AND paper_code = ? AND is_active = 1
           `).run(paperRecord.id, paperCode)
-          
+
           const existingRecord = this.db.prepare(`
             SELECT id FROM paper_package
             WHERE paper_id = ? AND paper_code = ? AND version = ?
           `).get(paperRecord.id, paperCode, version)
-          
+
           const syncTime = Date.now()
           const relativePath = `paper_packages/${path.basename(filePath)}`
-          
+
           if (existingRecord) {
             this.db.prepare(`
               UPDATE paper_package
@@ -1879,14 +1860,14 @@ class PaperService {
               VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1)
             `).run(paperRecord.id, paperCode, relativePath, finalHash, buffer.length, version, syncTime)
           }
-          
+
           console.log(`✓ ZIP包已保存到文件系统: ${filePath}, 大小: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`)
-          
+
           // 更新下载状态为完成
           if (paperId) {
             this.updateDownloadStatus(paperId, paperCode, 'completed', 100, buffer.length, buffer.length)
           }
-          
+
           resolve({
             success: true,
             packagePath: filePath,
@@ -1918,24 +1899,24 @@ class PaperService {
     try {
       const packageFileName = `${paperCode}_v${version}.zip`
       const packagePath = path.join(this.packageBasePath, packageFileName)
-      
+
       // 动态计算分片大小（优化：使用5MB分片，更快响应）
       // 统一使用5MB分片，无论文件大小，提供更快的响应速度
       const chunkSize = 5 * 1024 * 1024 // 5MB分片
-      
+
       const totalChunks = Math.ceil(totalSize / chunkSize)
       console.log(`开始分片下载: ${packageFileName}, 大小: ${(totalSize / 1024 / 1024).toFixed(2)}MB, 分片数: ${totalChunks}, 分片大小: ${(chunkSize / 1024 / 1024).toFixed(2)}MB`)
-      
+
       // 断点续传：检查是否有未完成的下载
       const resumeInfo = this.getResumeInfo(paperId, paperCode, version, totalSize, totalChunks)
       let downloadedBytes = resumeInfo.downloadedBytes
       const downloadedChunks = resumeInfo.downloadedChunks // Set<chunkIndex>
-      
+
       console.log(`断点续传检查: 已下载 ${downloadedBytes} 字节 (${(downloadedBytes / 1024 / 1024).toFixed(2)}MB), 已完成分片: ${downloadedChunks.size}/${totalChunks}`)
-      
+
       // 初始化chunks数组（存储每个分片的数据）
       const chunks = new Array(totalChunks)
-      
+
       // 断点续传：如果文件已存在且需要续传，先读取已下载的分片
       if (resumeInfo.canResume && fs.existsSync(packagePath)) {
         // 断点续传：读取已下载的分片数据到chunks数组
@@ -1963,27 +1944,27 @@ class PaperService {
         // 更新下载状态
         this.updateDownloadStatus(paperId, paperCode, 'downloading', 0, 0, totalSize)
       }
-      
+
       // 并发下载所有分片（优化：增加到6个并发，提高下载速度）
       const downloadPromises = []
       const maxConcurrent = 6 // 增加到6个并发
       let currentConcurrent = 0
-      
+
       for (let i = 0; i < totalChunks; i++) {
         // 跳过已下载的分片（断点续传时，已下载的分片已在上面读取到chunks数组）
         if (downloadedChunks.has(i) && chunks[i] && chunks[i].data) {
           // 分片已下载且已读取，跳过
           continue
         }
-        
+
         const start = i * chunkSize
         const end = Math.min(start + chunkSize - 1, totalSize - 1)
-        
+
         // 控制并发数
         while (currentConcurrent >= maxConcurrent) {
           await new Promise(resolve => setTimeout(resolve, 100))
         }
-        
+
         currentConcurrent++
         const promise = this.downloadChunk(paperId, start, end, token)
           .then(chunkData => {
@@ -1991,16 +1972,16 @@ class PaperService {
             downloadedBytes += chunkData.length
             downloadedChunks.add(i)
             currentConcurrent--
-            
+
             // 更新下载状态到数据库
             const progress = totalSize > 0 ? Math.floor((downloadedBytes / totalSize) * 100) : 0
             this.updateDownloadStatus(paperId, paperCode, 'downloading', progress, downloadedBytes, totalSize)
-            
+
             // 进度回调
             if (onProgress && totalSize > 0) {
               onProgress(progress)
             }
-            
+
             console.log(`分片 ${i + 1}/${totalChunks} 下载完成，已下载: ${(downloadedBytes / 1024 / 1024).toFixed(2)}MB / ${(totalSize / 1024 / 1024).toFixed(2)}MB`)
           })
           .catch(error => {
@@ -2009,47 +1990,47 @@ class PaperService {
             this.updateDownloadStatus(paperId, paperCode, 'error', 0, downloadedBytes, totalSize, error.message)
             throw error
           })
-        
+
         downloadPromises.push(promise)
       }
-      
+
       // 等待所有分片下载完成
       await Promise.all(downloadPromises)
-      
+
       // 验证所有分片都已下载
       for (let i = 0; i < totalChunks; i++) {
         if (!chunks[i] || !chunks[i].data) {
           throw new Error(`分片 ${i + 1}/${totalChunks} 下载失败或数据为空`)
         }
       }
-      
+
       console.log(`✓ 所有分片下载完成，开始合并写入文件`)
-      
+
       // 按顺序写入文件（所有分片，包括已下载的和新下载的）
       const writeStream = fs.createWriteStream(packagePath)
       for (let i = 0; i < totalChunks; i++) {
         writeStream.write(chunks[i].data)
       }
-      
+
       writeStream.end()
-      
+
       // 等待文件写入完成
       await new Promise((resolve, reject) => {
         writeStream.on('close', resolve)
         writeStream.on('error', reject)
       })
-      
+
       console.log(`✓ 文件写入完成: ${packagePath}`)
-      
+
       // 验证hash（如果提供了expectedHash）
       const buffer = fs.readFileSync(packagePath)
-      
+
       // 检查文件大小
       if (buffer.length === 0) {
         fs.unlinkSync(packagePath)
         throw new Error('下载的ZIP包为空')
       }
-      
+
       // 检查ZIP文件头（PK开头）
       if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
         fs.unlinkSync(packagePath)
@@ -2057,17 +2038,17 @@ class PaperService {
         console.error('下载的内容不是ZIP文件，前500字节:', errorText)
         throw new Error(`下载的内容不是ZIP文件，可能是错误信息: ${errorText.substring(0, 200)}`)
       }
-      
+
       const actualHash = this.calculateHash(buffer)
-      
+
       if (expectedHash && actualHash !== expectedHash) {
         fs.unlinkSync(packagePath)
         console.error(`ZIP包hash验证失败: 期望 ${expectedHash}, 实际 ${actualHash}`)
         throw new Error(`ZIP包hash验证失败: 期望 ${expectedHash}, 实际 ${actualHash}`)
       }
-      
+
       const finalHash = expectedHash || actualHash
-      
+
       // 获取paper_id（使用传入的paperId，如果不存在则查询）
       let finalPaperId = paperId
       if (!finalPaperId) {
@@ -2078,11 +2059,11 @@ class PaperService {
           finalPaperId = paperRecordForFragments.id
         }
       }
-      
+
       if (!finalPaperId) {
         throw new Error(`本地paper表中没有找到试卷记录: ${paperCode}，无法保存paper_package`)
       }
-      
+
       // 保存路径到SQLite
       // 先禁用旧版本的记录（如果有）
       this.db.prepare(`
@@ -2090,16 +2071,16 @@ class PaperService {
         SET is_active = 0
         WHERE paper_id = ? AND is_active = 1
       `).run(finalPaperId)
-      
+
       // 检查是否已存在相同版本的记录
       const existingRecord = this.db.prepare(`
         SELECT id FROM paper_package
         WHERE paper_id = ? AND version = ?
       `).get(finalPaperId, version)
-      
+
       const relativePath = path.relative(app.getPath('userData'), packagePath)
       const syncTime = Date.now()
-      
+
       try {
         if (existingRecord) {
           // 更新现有记录
@@ -2124,7 +2105,7 @@ class PaperService {
             DELETE FROM paper_package
             WHERE paper_id = ?
           `).run(finalPaperId)
-          
+
           // 插入新记录
           this.db.prepare(`
             INSERT INTO paper_package 
@@ -2147,25 +2128,25 @@ class PaperService {
         console.error(`paper_id=${finalPaperId}, paper_code=${paperCode}, version=${version}`)
         throw error
       }
-      
+
       console.log(`✓ ZIP包分片下载完成: ${packagePath}, 大小: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`)
-      
+
       // 验证记录是否已保存到 paper_package 表
       const verifyRecord = this.db.prepare(`
         SELECT id, paper_code, version, is_active FROM paper_package
         WHERE paper_id = ? AND paper_code = ? AND version = ?
       `).get(finalPaperId, paperCode, version)
-      
+
       if (verifyRecord) {
         console.log(`✓ 验证：完整包已保存到 paper_package 表，id=${verifyRecord.id}, paper_code=${verifyRecord.paper_code}, version=${verifyRecord.version}, is_active=${verifyRecord.is_active}`)
       } else {
         console.error(`❌ 错误：完整包保存后验证失败，paper_package 表中未找到记录！`)
         console.error(`   paper_id=${finalPaperId}, paper_code=${paperCode}, version=${version}`)
       }
-      
+
       // 更新下载状态为已完成
       this.updateDownloadStatus(finalPaperId, paperCode, 'completed', 100, buffer.length, totalSize)
-      
+
       return {
         success: true,
         storageType: 'filesystem',
@@ -2180,7 +2161,7 @@ class PaperService {
       throw error
     }
   }
-  
+
   /**
    * 下载单个分片（使用Range请求）
    */
@@ -2198,16 +2179,16 @@ class PaperService {
         responseType: 'arraybuffer',
         timeout: 30000 // 优化：30秒超时，快速失败并重试
       })
-      .then(response => {
-        if (response.status === 206 || response.status === 200) {
-          resolve(Buffer.from(response.data))
-        } else {
-          reject(new Error(`下载分片失败: 状态码 ${response.status}`))
-        }
-      })
-      .catch(error => {
-        reject(new Error(`下载分片失败: ${error.message}`))
-      })
+        .then(response => {
+          if (response.status === 206 || response.status === 200) {
+            resolve(Buffer.from(response.data))
+          } else {
+            reject(new Error(`下载分片失败: 状态码 ${response.status}`))
+          }
+        })
+        .catch(error => {
+          reject(new Error(`下载分片失败: ${error.message}`))
+        })
     })
   }
 
@@ -2217,7 +2198,7 @@ class PaperService {
   calculateHash(buffer) {
     return crypto.createHash('sha256').update(buffer).digest('hex')
   }
-  
+
   /**
    * 获取断点续传信息
    */
@@ -2229,7 +2210,7 @@ class PaperService {
         FROM download_status
         WHERE paper_id = ?
       `).get(paperId)
-      
+
       if (!status || status.status !== 'downloading') {
         return {
           canResume: false,
@@ -2237,11 +2218,11 @@ class PaperService {
           downloadedChunks: new Set()
         }
       }
-      
+
       // 检查文件是否存在
       const packageFileName = `${paperCode}_v${version}.zip`
       const packagePath = path.join(this.packageBasePath, packageFileName)
-      
+
       if (!fs.existsSync(packagePath)) {
         // 文件不存在，清除状态
         this.clearDownloadStatus(paperId)
@@ -2251,11 +2232,11 @@ class PaperService {
           downloadedChunks: new Set()
         }
       }
-      
+
       // 检查文件大小
       const fileStats = fs.statSync(packagePath)
       const fileSize = fileStats.size
-      
+
       // 如果文件大小与已下载大小不一致，重新下载
       if (fileSize !== status.downloaded_size) {
         console.warn(`文件大小不一致，重新下载: 文件=${fileSize}, 记录=${status.downloaded_size}`)
@@ -2266,17 +2247,17 @@ class PaperService {
           downloadedChunks: new Set()
         }
       }
-      
+
       // 计算已下载的分片
       const chunkSize = 5 * 1024 * 1024 // 5MB
       const downloadedChunks = new Set()
       let downloadedBytes = 0
-      
+
       for (let i = 0; i < totalChunks; i++) {
         const start = i * chunkSize
         const end = Math.min(start + chunkSize - 1, totalSize - 1)
         const chunkLength = end - start + 1
-        
+
         if (fileSize >= start + chunkLength) {
           downloadedChunks.add(i)
           downloadedBytes += chunkLength
@@ -2285,7 +2266,7 @@ class PaperService {
           downloadedBytes += fileSize - start
         }
       }
-      
+
       return {
         canResume: true,
         downloadedBytes: downloadedBytes,
@@ -2300,19 +2281,19 @@ class PaperService {
       }
     }
   }
-  
+
   /**
    * 更新下载状态到数据库
    */
   updateDownloadStatus(paperId, paperCode, status, progress, downloadedSize, totalSize, errorMessage = null) {
     try {
       const now = Date.now()
-      
+
       // 检查是否已存在
       const existing = this.db.prepare(`
         SELECT paper_id FROM download_status WHERE paper_id = ?
       `).get(paperId)
-      
+
       if (existing) {
         // 更新
         this.db.prepare(`
@@ -2344,7 +2325,7 @@ class PaperService {
       console.warn('更新下载状态失败:', error)
     }
   }
-  
+
   /**
    * 清除下载状态
    */
@@ -2357,7 +2338,7 @@ class PaperService {
       console.warn('清除下载状态失败:', error)
     }
   }
-  
+
   /**
    * 获取下载状态
    */
@@ -2374,7 +2355,7 @@ class PaperService {
       return null
     }
   }
-  
+
   /**
    * 检查ZIP包是否存在
    */
@@ -2414,19 +2395,19 @@ class PaperService {
         FROM paper
         WHERE id = ?
       `).get(paperId)
-      
+
       if (!paperInfo) {
         console.warn(`[checkPackageExists] 未找到试卷信息，paperId=${paperId}`)
         return false
       }
-      
+
       const requiredVersion = paperInfo.version
       const paperCode = paperInfo.paper_code
       const expectedHash = paperInfo.package_hash
       const expectedSize = paperInfo.package_size
-      
+
       console.log(`[checkPackageExists] 检查完整包: paperId=${paperId}, paperCode=${paperCode}, 要求版本=${requiredVersion}`)
-      
+
       // 检查 paper_package 表中是否有要求版本的完整包（不是 _quick 包）
       const packageInfo = this.db.prepare(`
         SELECT paper_code, version, is_active, package_hash, package_size
@@ -2439,46 +2420,46 @@ class PaperService {
         const packageFileName = `${packageInfo.paper_code}_v${packageInfo.version}.zip`
         const packagePath = path.join(this.packageBasePath, packageFileName)
         const exists = fs.existsSync(packagePath)
-        
+
         if (!exists) {
           // 数据库有记录但文件不存在，删除记录
           console.warn(`[checkPackageExists] ⚠️ 数据库有记录但文件不存在，删除记录: ${packagePath}`)
           this.db.prepare(`DELETE FROM paper_package WHERE paper_id = ? AND version = ?`).run(paperId, requiredVersion)
           return false
         }
-        
+
         console.log(`[checkPackageExists] ✓ 数据库中有 v${requiredVersion} 记录，文件存在: ${packagePath}`)
         return true
       }
-      
+
       // 数据库中没有要求版本的记录，检查文件系统
       const packageFileName = `${paperCode}_v${requiredVersion}.zip`
       const packagePath = path.join(this.packageBasePath, packageFileName)
       const existsOnDisk = fs.existsSync(packagePath)
-      
+
       if (!existsOnDisk) {
         console.log(`[checkPackageExists] 数据库和文件系统都没有 v${requiredVersion}`)
         return false
       }
-      
+
       console.log(`[checkPackageExists] ⚠️ 文件存在但数据库没有记录，尝试补充记录: ${packagePath}`)
-      
+
       // 文件存在但数据库没有记录，验证hash并补充记录
       try {
         // 读取文件并计算hash
         const fileBuffer = fs.readFileSync(packagePath)
         const actualHash = crypto.createHash('sha256').update(fileBuffer).digest('hex')
         const actualSize = fileBuffer.length
-        
+
         console.log(`[checkPackageExists] 文件hash验证: 期望=${expectedHash}, 实际=${actualHash}`)
-        
+
         // 如果hash不匹配，删除文件
         if (expectedHash && actualHash !== expectedHash) {
           console.error(`[checkPackageExists] ❌ hash不匹配，删除文件: ${packagePath}`)
           fs.unlinkSync(packagePath)
           return false
         }
-        
+
         // hash匹配或没有期望hash，补充数据库记录
         const relativePath = `paper_packages/${packageFileName}`
         this.db.prepare(`
@@ -2494,7 +2475,7 @@ class PaperService {
           requiredVersion,
           Date.now()
         )
-        
+
         console.log(`[checkPackageExists] ✓ 已补充数据库记录: paperId=${paperId}, version=${requiredVersion}, hash=${actualHash}`)
         return true
       } catch (error) {
@@ -2506,7 +2487,7 @@ class PaperService {
       return false
     }
   }
-  
+
   /**
    * 检查是否有任何可用版本的完整包（用于降级使用）
    * 注意：会同时检查快速包和完整包是否都存在同一版本
@@ -2520,20 +2501,20 @@ class PaperService {
         FROM paper
         WHERE id = ?
       `).get(paperId)
-      
+
       if (!paperInfo) {
         console.warn(`[checkAnyPackageExists] 未找到试卷信息，paperId=${paperId}`)
         return null
       }
-      
+
       const paperCode = paperInfo.paper_code
       const requiredVersion = paperInfo.version
-      
+
       console.log(`[checkAnyPackageExists] 检查任意可用版本: paperId=${paperId}, paperCode=${paperCode}, 要求版本=${requiredVersion}`)
-      
+
       // 获取所有可用的完整包版本（从数据库和文件系统）
       const availableVersions = new Set()
-      
+
       // 1. 从数据库获取完整包版本
       const dbPackages = this.db.prepare(`
         SELECT DISTINCT version
@@ -2541,38 +2522,38 @@ class PaperService {
         WHERE paper_id = ? AND paper_code = ? AND is_active = 1
         ORDER BY version DESC
       `).all(paperId, paperCode)
-      
+
       dbPackages.forEach(p => availableVersions.add(p.version))
-      
+
       // 2. 从文件系统获取完整包版本
-      const fullPackageFiles = fs.readdirSync(this.packageBasePath).filter(f => 
+      const fullPackageFiles = fs.readdirSync(this.packageBasePath).filter(f =>
         f.startsWith(`${paperCode}_v`) && f.endsWith('.zip') && !f.includes('_quick')
       )
-      
+
       fullPackageFiles.forEach(f => {
         const match = f.match(/_v(\d+)\.zip$/)
         if (match) {
           availableVersions.add(parseInt(match[1]))
         }
       })
-      
+
       // 3. 按版本号从高到低排序
       const sortedVersions = Array.from(availableVersions).sort((a, b) => b - a)
-      
+
       console.log(`[checkAnyPackageExists] 找到的完整包版本: ${sortedVersions.join(', ') || '无'}`)
-      
+
       // 4. 检查每个版本，找到同时有快速包和完整包的版本
       for (const version of sortedVersions) {
         const fullPackageFileName = `${paperCode}_v${version}.zip`
         const quickPackageFileName = `${paperCode}_v${version}_quick.zip`
         const fullPackagePath = path.join(this.packageBasePath, fullPackageFileName)
         const quickPackagePath = path.join(this.packageBasePath, quickPackageFileName)
-        
+
         const hasFullPackage = fs.existsSync(fullPackagePath)
         const hasQuickPackage = fs.existsSync(quickPackagePath)
-        
+
         console.log(`[checkAnyPackageExists] 检查版本 v${version}: 完整包=${hasFullPackage}, 快速包=${hasQuickPackage}`)
-        
+
         if (hasFullPackage && hasQuickPackage) {
           // 找到同时有快速包和完整包的版本
           console.log(`[checkAnyPackageExists] ✓ 找到可用版本 v${version}（快速包和完整包都存在）`)
@@ -2603,7 +2584,7 @@ class PaperService {
           }
         }
       }
-      
+
       console.log(`[checkAnyPackageExists] 没有找到任何可用版本（快速包或完整包）`)
       return null
     } catch (error) {
@@ -2651,7 +2632,7 @@ class PaperService {
         if (fs.existsSync(this.packageBasePath)) {
           const files = fs.readdirSync(this.packageBasePath)
           let maxVersion = 0
-          
+
           for (const file of files) {
             // 匹配格式：{paperCode}_v{version}.zip 或 {paperCode}_v{version}_quick.zip
             const match = file.match(new RegExp(`^${paper.paper_code}_v(\\d+)(_quick)?\\.zip$`))
@@ -2662,7 +2643,7 @@ class PaperService {
               }
             }
           }
-          
+
           if (maxVersion > 0) {
             return maxVersion
           }
@@ -2740,12 +2721,12 @@ class PaperService {
           }
         }
       }
-      
+
       // 验证数据是否正确解析
       if (!manifest || typeof manifest !== 'object') {
         throw new Error('manifest.json 解析失败或格式不正确')
       }
-      
+
       console.log(`✓ manifest.json读取成功: 字段数=${Object.keys(manifest).length}`)
 
       // 提取快速启动包中的媒体文件到media目录
@@ -2791,10 +2772,10 @@ class PaperService {
             if (srcStats.size === 0) {
               console.warn(`⚠️ 警告：试听媒体源文件为空: ${srcPath}`)
             }
-            
+
             // 复制文件
             fs.copyFileSync(srcPath, destPath)
-            
+
             // 验证复制后的文件
             if (fs.existsSync(destPath)) {
               const destStats = fs.statSync(destPath)
@@ -2897,7 +2878,7 @@ class PaperService {
         const existingPaper = this.db.prepare(`
           SELECT id FROM paper WHERE paper_code = ? LIMIT 1
         `).get(paperCode)
-        
+
         if (existingPaper) {
           // 更新paper表记录（使用manifest中的信息）
           const updateStmt = this.db.prepare(`
@@ -2990,7 +2971,7 @@ class PaperService {
         WHERE paper_code = ? AND version = ? AND is_active = 1
         LIMIT 1
       `).get(paperCode, version)
-      
+
       if (!packageRecord) {
         // 指定版本不存在，尝试获取最新可用版本
         packageRecord = this.db.prepare(`
@@ -3000,7 +2981,7 @@ class PaperService {
           ORDER BY version DESC
           LIMIT 1
         `).get(paperCode)
-        
+
         if (packageRecord) {
           actualVersion = packageRecord.version
           console.log(`⚠️ 指定版本 ${version} 不存在，使用可用版本: ${actualVersion}`)
@@ -3008,7 +2989,7 @@ class PaperService {
           // 数据库中没有记录，尝试从文件系统查找
           const zipFileName = `${paperCode}_v${version}.zip`
           const zipFilePath = path.join(this.packageBasePath, zipFileName)
-          
+
           if (fs.existsSync(zipFilePath)) {
             console.log(`✓ 从文件系统找到ZIP包: ${zipFileName}`)
             // 文件存在，继续使用请求的版本
@@ -3016,7 +2997,7 @@ class PaperService {
             // 尝试查找其他版本的文件
             const files = fs.readdirSync(this.packageBasePath)
             const matchingFiles = files.filter(f => f.startsWith(`${paperCode}_v`) && f.endsWith('.zip') && !f.includes('_quick'))
-            
+
             if (matchingFiles.length > 0) {
               // 按版本号排序，取最新的
               matchingFiles.sort((a, b) => {
@@ -3033,7 +3014,7 @@ class PaperService {
           }
         }
       }
-      
+
       // 检查缓存（使用实际版本号）
       const cacheKey = `${paperCode}_v${actualVersion}`
       if (this.extractCache.has(cacheKey)) {
@@ -3050,10 +3031,10 @@ class PaperService {
       if (!zipData) {
         throw new Error(`ZIP包不存在: ${paperCode} (版本 ${actualVersion})`)
       }
-      
+
       // 记录实际使用的 ZIP 数据来源
       let zipDataSource = null // { filePath, version, fromFileSystem, needsWrite }
-      
+
       if (!packageRecord || packageRecord.version !== actualVersion) {
         // 重新查询实际版本的记录
         packageRecord = this.db.prepare(`
@@ -3063,12 +3044,12 @@ class PaperService {
           LIMIT 1
         `).get(paperCode, actualVersion)
       }
-      
+
       if (!packageRecord) {
         // paper_package 表中没有记录，需要从文件系统查找并记录文件路径
         const zipFileName = `${paperCode}_v${actualVersion}.zip`
         const zipFilePath = path.join(this.packageBasePath, zipFileName)
-        
+
         if (fs.existsSync(zipFilePath)) {
           zipDataSource = {
             filePath: zipFilePath,
@@ -3094,7 +3075,7 @@ class PaperService {
           needsWrite: false
         }
       }
-      
+
       // 更新 version 为实际使用的版本
       const version_to_use = actualVersion
 
@@ -3143,7 +3124,7 @@ class PaperService {
           }
         }
       }
-      
+
       // 验证数据是否正确解析
       if (!manifest || typeof manifest !== 'object') {
         throw new Error('manifest.json 解析失败或格式不正确')
@@ -3151,7 +3132,7 @@ class PaperService {
       if (!Array.isArray(questions)) {
         throw new Error('questions.json 解析失败或格式不正确（应为数组）')
       }
-      
+
       console.log(`✓ JSON文件读取成功: manifest字段数=${Object.keys(manifest).length}, questions数量=${questions.length}`)
 
       // 4. 更新本地paper表的完整信息（从manifest中获取的信息）
@@ -3161,7 +3142,7 @@ class PaperService {
         const existingPaper = this.db.prepare(`
           SELECT id FROM paper WHERE paper_code = ? LIMIT 1
         `).get(paperCode)
-        
+
         if (existingPaper) {
           // 更新paper表记录（使用manifest中的信息，包括新字段）
           const updateStmt = this.db.prepare(`
@@ -3231,14 +3212,14 @@ class PaperService {
           if (paper && paper.id) {
             // 先删除旧的卷别数据
             this.db.prepare(`DELETE FROM paper_volume WHERE paper_id = ?`).run(paper.id)
-            
+
             // 插入新的卷别数据（如果 manifest 中有 id，使用它；否则让数据库自动生成）
             const volumeStmt = this.db.prepare(`
               INSERT INTO paper_volume 
               (id, paper_id, volume_code, volume_name, volume_order, create_time)
               VALUES (?, ?, ?, ?, ?, ?)
             `)
-            
+
             for (const volume of manifest.volumes) {
               // 如果 manifest 中有 id，使用它；否则传入 null 让数据库自动生成
               const volumeId = volume.id || null
@@ -3265,37 +3246,38 @@ class PaperService {
           if (paper && paper.id) {
             // 先删除旧的大题数据
             this.db.prepare(`DELETE FROM paper_section WHERE paper_id = ?`).run(paper.id)
-            
+
             // 插入新的大题数据（必须包含 volume_id）
+            // 如果 manifest 中有 id，使用它；否则让数据库自动生成
             const sectionStmt = this.db.prepare(`
               INSERT INTO paper_section 
-              (paper_id, volume_id, volume_code, section_name, section_order, 
+              (id, paper_id, volume_id, volume_code, section_name, section_order, 
                question_count, total_score, score_per_question, instruction_text, audio_play_count, answer_time, create_time)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
-            
+
             for (const section of manifest.sections) {
               // 优先使用 manifest 中的 volumeId（与 volumes 的 id 匹配）
               let volumeId = section.volumeId || null
               let volumeCode = section.volumeCode || ''
-              
+
               // 如果 manifest 中没有 volumeId，尝试根据 volumeCode 查找（兼容旧数据）
               if (!volumeId && volumeCode && volumeCode.trim() !== '') {
                 const volumeRecord = this.db.prepare(`
                   SELECT id FROM paper_volume WHERE paper_id = ? AND volume_code = ? LIMIT 1
                 `).get(paper.id, volumeCode)
-                
+
                 if (volumeRecord) {
                   volumeId = volumeRecord.id
                 }
               }
-              
+
               // 如果仍然没有 volumeId，尝试使用第一个卷别（兼容处理）
               if (!volumeId) {
                 const firstVolume = this.db.prepare(`
                   SELECT id, volume_code FROM paper_volume WHERE paper_id = ? ORDER BY volume_order ASC LIMIT 1
                 `).get(paper.id)
-                
+
                 if (firstVolume) {
                   volumeId = firstVolume.id
                   volumeCode = firstVolume.volume_code
@@ -3305,19 +3287,24 @@ class PaperService {
                   continue
                 }
               }
-              
+
               // 如果 volumeCode 为空，尝试从 paper_volume 表中获取
               if (!volumeCode || volumeCode.trim() === '') {
                 const volumeRecord = this.db.prepare(`
                   SELECT volume_code FROM paper_volume WHERE id = ? LIMIT 1
                 `).get(volumeId)
-                
+
                 if (volumeRecord) {
                   volumeCode = volumeRecord.volume_code
                 }
               }
-              
+
+              // 如果 manifest 中有 id，使用它；否则传入 null 让数据库自动生成
+              const sectionId = section.id || section.sectionId || null
+              console.log(`[extractPaperPackage] 保存大题: id=${sectionId}, sectionName=${section.sectionName}, volumeId=${volumeId}, volumeCode=${volumeCode}`)
+
               sectionStmt.run(
+                sectionId, // id（使用 manifest 中的原始 section id）
                 paper.id,
                 volumeId, // volume_id（与 volumes 的 id 匹配）
                 volumeCode || '', // volume_code (保留用于显示)
@@ -3339,6 +3326,113 @@ class PaperService {
         }
       }
 
+      // 4.3. 保存题目组数据到 paper_question_group 表 (New)
+      if (manifest.sections && Array.isArray(manifest.sections)) {
+        try {
+          const paper = this.db.prepare(`SELECT id FROM paper WHERE paper_code = ? LIMIT 1`).get(paperCode)
+          if (paper && paper.id) {
+            // 清理旧数据：删除该试卷所有大题下的题目组
+            // 注意：由于 paper_section 刚刚被重建，如果ID保持一致，这里可以正确关联
+            this.db.prepare(`DELETE FROM paper_question_group WHERE section_id IN (SELECT id FROM paper_section WHERE paper_id = ?)`).run(paper.id)
+
+            const groupStmt = this.db.prepare(`
+               INSERT INTO paper_question_group
+               (id, section_id, group_name, question_group_id, group_order, start_question_num, end_question_num, audio_url, audio_path, audio_duration, intro_text, answer_time, selected_question_ids, create_time)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             `)
+
+            let groupCount = 0
+            for (const section of manifest.sections) {
+              if (section.questionGroups && Array.isArray(section.questionGroups)) {
+                for (const group of section.questionGroups) {
+                  // Java后端生成的JSON中，Group对象可能不包含sectionId（因为是嵌套关系），所以优先使用父级section的ID
+                  const sectionId = section.id || section.sectionId || group.sectionId || group.section_id
+
+                  // 处理 selected_question_ids: JSON中是 'questions' 数组
+                  let selectedIdsStr = null
+                  if (Array.isArray(group.questions)) {
+                    selectedIdsStr = JSON.stringify(group.questions)
+                  } else if (group.selectedQuestionIds) {
+                    selectedIdsStr = group.selectedQuestionIds
+                  }
+
+                  groupStmt.run(
+                    group.id || null,
+                    sectionId,
+                    group.groupName || group.group_name,
+                    group.questionGroupId || group.question_group_id || null,
+                    group.groupOrder || group.group_order || 0,
+                    group.startQuestionNum || group.start_question_num || null,
+                    group.endQuestionNum || group.end_question_num || null,
+                    group.audioUrl || group.audio_url || null,
+                    group.audioPath || group.audio_path || null,
+                    group.audioDuration || group.audio_duration || 0,
+                    group.introText || group.intro_text || null,
+                    group.answerTime || group.answer_time || null,
+                    selectedIdsStr,
+                    Date.now()
+                  )
+                  groupCount++
+                }
+              }
+            }
+
+            if (groupCount > 0) {
+              console.log(`✓ 已保存 ${groupCount} 个题目组到 paper_question_group 表`)
+            }
+          }
+        } catch (error) {
+          console.warn(`保存题目组数据失败: ${error.message}`)
+        }
+      }
+
+      // 4.2.1. 保存题目关联数据到 paper_question 表（从 questions.json 提取）
+      if (questions && Array.isArray(questions) && questions.length > 0) {
+        try {
+          const paper = this.db.prepare(`SELECT id FROM paper WHERE paper_code = ? LIMIT 1`).get(paperCode)
+          if (paper && paper.id) {
+            // 先删除旧的题目关联数据
+            this.db.prepare(`DELETE FROM paper_question WHERE paper_id = ?`).run(paper.id)
+
+            // 插入新的题目关联数据
+            const questionStmt = this.db.prepare(`
+              INSERT OR REPLACE INTO paper_question 
+              (paper_id, question_id, section_id, section_order, sort_order, score, create_time)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `)
+
+            let savedCount = 0
+            for (const question of questions) {
+              const questionId = question.id || question.question_id || question.questionId
+              if (!questionId) {
+                console.warn(`⚠️ 题目缺少ID，跳过: title=${question.title?.substring(0, 30)}...`)
+                continue
+              }
+
+              // 获取题目所属的大题ID
+              const sectionId = question.section_id || question.sectionId || null
+              const sectionOrder = question.section_order || question.sectionOrder || 0
+              const sortOrder = question.sort_order || question.question_sort || question.sortOrder || 0
+              const score = question.score || 0
+
+              questionStmt.run(
+                paper.id,
+                questionId,
+                sectionId,
+                sectionOrder,
+                sortOrder,
+                score,
+                Date.now()
+              )
+              savedCount++
+            }
+            console.log(`✓ 已保存 ${savedCount} 个题目关联到 paper_question 表`)
+          }
+        } catch (error) {
+          console.warn(`保存题目关联数据失败: ${error.message}`)
+        }
+      }
+
       // 4.3. 保存中场配置数据到 paper_intermission 表
       if (manifest.intermissions && Array.isArray(manifest.intermissions)) {
         try {
@@ -3346,14 +3440,14 @@ class PaperService {
           if (paper && paper.id) {
             // 先删除旧的中场配置数据
             this.db.prepare(`DELETE FROM paper_intermission WHERE paper_id = ?`).run(paper.id)
-            
+
             // 插入新的中场配置数据
             const intermissionStmt = this.db.prepare(`
               INSERT INTO paper_intermission 
               (paper_id, from_volume, to_volume, intermission_text, intermission_audio_url, intermission_audio_path, intermission_audio_duration, can_skip, create_time)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
-            
+
             for (const intermission of manifest.intermissions) {
               intermissionStmt.run(
                 paper.id,
@@ -3434,41 +3528,41 @@ class PaperService {
       if (zipDataSource && zipDataSource.needsWrite && zipDataSource.fromFileSystem && zipDataSource.filePath) {
         try {
           console.log(`开始自动写入 paper_package 表: paperCode=${paperCode}, version=${version}`)
-          
+
           // 获取 paper_id
           const paperRecord = this.db.prepare(`
             SELECT id FROM paper WHERE paper_code = ? LIMIT 1
           `).get(paperCode)
-          
+
           if (!paperRecord || !paperRecord.id) {
             console.warn(`无法写入 paper_package 表：paper 表中没有找到 paper_code=${paperCode} 的记录`)
           } else {
             const paperId = paperRecord.id
             const actualVersion = zipDataSource.version // 使用实际找到的版本号
-            
+
             // 读取文件并计算 hash
             const fileStats = fs.statSync(zipDataSource.filePath)
             const fileBuffer = fs.readFileSync(zipDataSource.filePath)
             const packageHash = this.calculateHash(fileBuffer)
             const packageSize = fileStats.size
-            
+
             // 计算相对路径
             const relativePath = path.relative(app.getPath('userData'), zipDataSource.filePath)
             const syncTime = Date.now()
-            
+
             // 先禁用旧版本的记录（如果有）
             this.db.prepare(`
               UPDATE paper_package 
               SET is_active = 0 
               WHERE paper_id = ? AND paper_code = ? AND is_active = 1
             `).run(paperId, paperCode)
-            
+
             // 检查是否已存在相同版本的记录
             const existingRecord = this.db.prepare(`
               SELECT id FROM paper_package
               WHERE paper_id = ? AND paper_code = ? AND version = ?
             `).get(paperId, paperCode, actualVersion)
-            
+
             if (existingRecord) {
               // 更新现有记录
               this.db.prepare(`
@@ -3483,7 +3577,7 @@ class PaperService {
                 syncTime,
                 existingRecord.id
               )
-                console.log(`✓ 已更新完整包到 paper_package 表: paper_id=${paperId}, paper_code=${paperCode}, version=${actualVersion}`)
+              console.log(`✓ 已更新完整包到 paper_package 表: paper_id=${paperId}, paper_code=${paperCode}, version=${actualVersion}`)
             } else {
               // 插入新记录
               try {
@@ -3510,7 +3604,7 @@ class PaperService {
                     DELETE FROM paper_package
                     WHERE paper_id = ? AND paper_code = ?
                   `).run(paperId, paperCode)
-                  
+
                   // 重新插入
                   this.db.prepare(`
                     INSERT INTO paper_package 
@@ -3532,13 +3626,13 @@ class PaperService {
                 }
               }
             }
-            
+
             // 验证记录是否已保存到 paper_package 表
             const verifyRecord = this.db.prepare(`
               SELECT id, paper_code, version, is_active FROM paper_package
               WHERE paper_id = ? AND paper_code = ? AND version = ?
             `).get(paperId, paperCode, actualVersion)
-            
+
             if (verifyRecord) {
               console.log(`✓ 验证：完整包已自动保存到 paper_package 表，id=${verifyRecord.id}, paper_code=${verifyRecord.paper_code}, version=${verifyRecord.version}, is_active=${verifyRecord.is_active}`)
             } else {
@@ -3571,7 +3665,7 @@ class PaperService {
   async getPaperPackageData(paperCode, version = null) {
     try {
       let packageInfo
-      
+
       if (version) {
         // 优先查找指定版本的ZIP包
         packageInfo = this.db.prepare(`
@@ -3580,26 +3674,26 @@ class PaperService {
           WHERE paper_code = ? AND version = ? AND is_active = 1
           LIMIT 1
         `).get(paperCode, version)
-        
+
         if (packageInfo) {
           console.log(`✓ 找到指定版本的ZIP包(数据库): paper_code=${paperCode}, version=${version}`)
         } else {
           // 数据库中不存在，尝试从文件系统查找
           const zipFileName = `${paperCode}_v${version}.zip`
           const zipFilePath = path.join(this.packageBasePath, zipFileName)
-          
+
           if (fs.existsSync(zipFilePath)) {
             console.log(`✓ 找到指定版本的ZIP包(文件系统): ${zipFileName}`)
             // 直接从文件系统读取
             const zipData = fs.readFileSync(zipFilePath)
             console.log(`✓ 从文件系统读取ZIP包成功，大小: ${(zipData.length / 1024 / 1024).toFixed(2)}MB`)
-            
+
             // 自动将文件系统中的ZIP包写入数据库
             await this.registerFileSystemPackage(paperCode, version, zipFilePath, zipData)
-            
+
             return zipData
           }
-          
+
           // 文件系统也不存在指定版本，尝试获取最新版本（向下兼容）
           console.warn(`⚠️ 指定版本 ${version} 的ZIP包不存在（数据库和文件系统都没有），尝试获取最新版本`)
           packageInfo = this.db.prepare(`
@@ -3609,15 +3703,15 @@ class PaperService {
             ORDER BY version DESC
             LIMIT 1
           `).get(paperCode)
-          
+
           if (packageInfo) {
             console.warn(`⚠️ 使用最新可用版本: ${packageInfo.version}（请求版本: ${version}）`)
           } else {
             // 数据库中没有任何版本，尝试从文件系统查找最新版本
-            const files = fs.readdirSync(this.packageBasePath).filter(f => 
+            const files = fs.readdirSync(this.packageBasePath).filter(f =>
               f.startsWith(`${paperCode}_v`) && f.endsWith('.zip') && !f.includes('_quick')
             )
-            
+
             if (files.length > 0) {
               // 按版本号排序，取最新的
               files.sort((a, b) => {
@@ -3625,18 +3719,18 @@ class PaperService {
                 const vB = parseInt(b.match(/_v(\d+)\.zip$/)?.[1] || '0')
                 return vB - vA
               })
-              
+
               const latestFile = files[0]
               const latestVersion = parseInt(latestFile.match(/_v(\d+)\.zip$/)?.[1] || '0')
               const latestFilePath = path.join(this.packageBasePath, latestFile)
-              
+
               console.warn(`⚠️ 从文件系统找到最新版本: ${latestFile}，版本号: ${latestVersion}`)
               const zipData = fs.readFileSync(latestFilePath)
               console.log(`✓ 从文件系统读取ZIP包成功，大小: ${(zipData.length / 1024 / 1024).toFixed(2)}MB`)
-              
+
               // 自动将文件系统中的ZIP包写入数据库
               await this.registerFileSystemPackage(paperCode, latestVersion, latestFilePath, zipData)
-              
+
               return zipData
             }
           }
@@ -3650,33 +3744,33 @@ class PaperService {
           ORDER BY version DESC
           LIMIT 1
         `).get(paperCode)
-        
+
         if (packageInfo) {
           console.log(`✓ 找到最新版本的ZIP包: paper_code=${paperCode}, version=${packageInfo.version}`)
         } else {
           // 数据库中没有，尝试从文件系统查找
-          const files = fs.readdirSync(this.packageBasePath).filter(f => 
+          const files = fs.readdirSync(this.packageBasePath).filter(f =>
             f.startsWith(`${paperCode}_v`) && f.endsWith('.zip') && !f.includes('_quick')
           )
-          
+
           if (files.length > 0) {
             files.sort((a, b) => {
               const vA = parseInt(a.match(/_v(\d+)\.zip$/)?.[1] || '0')
               const vB = parseInt(b.match(/_v(\d+)\.zip$/)?.[1] || '0')
               return vB - vA
             })
-            
+
             const latestFile = files[0]
             const latestVersion = parseInt(latestFile.match(/_v(\d+)\.zip$/)?.[1] || '0')
             const latestFilePath = path.join(this.packageBasePath, latestFile)
-            
+
             console.log(`✓ 从文件系统找到最新版本: ${latestFile}，版本号: ${latestVersion}`)
             const zipData = fs.readFileSync(latestFilePath)
             console.log(`✓ 从文件系统读取ZIP包成功，大小: ${(zipData.length / 1024 / 1024).toFixed(2)}MB`)
-            
+
             // 自动将文件系统中的ZIP包写入数据库
             await this.registerFileSystemPackage(paperCode, latestVersion, latestFilePath, zipData)
-            
+
             return zipData
           }
         }
@@ -3704,7 +3798,7 @@ class PaperService {
       return null
     }
   }
-  
+
   /**
    * 将文件系统中的ZIP包注册到数据库
    * @param {string} paperCode - 试卷编码
@@ -3718,23 +3812,23 @@ class PaperService {
       const paper = this.db.prepare(`
         SELECT id FROM paper WHERE paper_code = ? LIMIT 1
       `).get(paperCode)
-      
+
       if (!paper) {
         console.warn(`⚠️ 无法注册ZIP包到数据库：paper表中没有找到试卷记录: ${paperCode}`)
         return
       }
-      
+
       // 计算hash
       const hash = this.calculateHash(zipData)
-      
+
       // 检查是否已存在
       const existing = this.db.prepare(`
         SELECT id FROM paper_package WHERE paper_code = ? AND version = ?
       `).get(paperCode, version)
-      
+
       const syncTime = Date.now()
       const relativePath = `paper_packages/${path.basename(filePath)}`
-      
+
       if (existing) {
         // 更新记录
         this.db.prepare(`
@@ -3750,7 +3844,7 @@ class PaperService {
           UPDATE paper_package SET is_active = 0 
           WHERE paper_id = ? AND paper_code = ? AND is_active = 1
         `).run(paper.id, paperCode)
-        
+
         // 插入新记录
         this.db.prepare(`
           INSERT INTO paper_package 
@@ -3799,7 +3893,7 @@ class PaperService {
           }
         }
       }
-      
+
       const zip = new AdmZip(zipData)
       zip.extractAllTo(targetDir, true)
       console.log(`✓ ZIP文件解压完成: ${targetDir}`)
@@ -3824,7 +3918,7 @@ class PaperService {
     // 主进程日志：直接输出到 Electron 后台控制台
     console.log(`[Main Process] 📦 [extractMediaFiles] 开始提取媒体文件，tempDir=${tempDir}, mediaDir=${mediaDir}`)
     console.log(`[Main Process] 📦 [extractMediaFiles] manifest.sections: ${manifest.sections ? (Array.isArray(manifest.sections) ? `数组，长度=${manifest.sections.length}` : typeof manifest.sections) : '不存在'}`)
-    
+
     // 确保media目录存在
     if (!fs.existsSync(mediaDir)) {
       fs.mkdirSync(mediaDir, { recursive: true })
@@ -3984,7 +4078,7 @@ class PaperService {
       for (const section of manifest.sections) {
         const sectionName = section.sectionName || section.section_name || '未知'
         console.log(`[Main Process] 📦 检查大题: ${sectionName}`)
-        
+
         // 优先处理 instructionAudioPath（单个路径字符串，新格式）
         if (section.instructionAudioPath) {
           const srcPath = path.join(tempDir, section.instructionAudioPath)
@@ -4037,6 +4131,7 @@ class PaperService {
         fs.mkdirSync(intermissionDir, { recursive: true })
       }
       for (const intermission of manifest.intermissions) {
+        // 新格式：intermissionMedia 数组
         if (intermission.intermissionMedia && Array.isArray(intermission.intermissionMedia)) {
           for (const media of intermission.intermissionMedia) {
             if (media.mediaPath) {
@@ -4050,7 +4145,81 @@ class PaperService {
             }
           }
         }
+        // 兼容旧格式：intermissionAudioPath 字段
+        if (intermission.intermissionAudioPath) {
+          const audioPath = intermission.intermissionAudioPath
+          const fileName = path.basename(audioPath)
+          const candidates = [
+            path.join(tempDir, audioPath),
+            path.join(tempDir, 'media', audioPath),
+            path.join(tempDir, 'intermission', fileName)
+          ]
+          for (const srcPath of candidates) {
+            if (srcPath && fs.existsSync(srcPath)) {
+              const destPath = path.join(intermissionDir, fileName)
+              try {
+                fs.copyFileSync(srcPath, destPath)
+                console.log(`✓ 提取中场音频(兼容路径) (${intermission.fromVolume}->${intermission.toVolume}): ${destPath}`)
+              } catch (err) {
+                console.warn(`⚠️ 复制中场音频失败: ${srcPath} -> ${destPath}, error=${err.message}`)
+              }
+              break
+            }
+          }
+        }
       }
+    }
+
+    // 提取题目组音频（新格式）
+    if (manifest.questionGroups && Array.isArray(manifest.questionGroups)) {
+      console.log(`[Main Process] 📦 开始提取题目组音频，共 ${manifest.questionGroups.length} 个题目组`)
+      const groupsDir = path.join(mediaDir, 'questions', 'groups')
+      if (!fs.existsSync(groupsDir)) {
+        fs.mkdirSync(groupsDir, { recursive: true })
+      }
+
+      let extractedCount = 0
+      for (const group of manifest.questionGroups) {
+        if (group.audioPath) {
+          // audioPath 可能是 "questions/groups/xxx.mp3"
+          let srcPath = path.join(tempDir, group.audioPath)
+
+          if (!fs.existsSync(srcPath)) {
+            // 尝试直接找文件名
+            const fileName = path.basename(group.audioPath)
+            // 尝试在 tempDir 下查找文件名
+            const findFile = (dir, targetFileName) => {
+              if (!fs.existsSync(dir)) return null
+              const entries = fs.readdirSync(dir, { withFileTypes: true })
+              for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name)
+                if (entry.isFile() && entry.name === targetFileName) {
+                  return fullPath
+                } else if (entry.isDirectory()) {
+                  const found = findFile(fullPath, targetFileName)
+                  if (found) return found
+                }
+              }
+              return null
+            }
+            srcPath = findFile(tempDir, fileName)
+          }
+
+          if (srcPath && fs.existsSync(srcPath)) {
+            const fileName = path.basename(group.audioPath)
+            const destPath = path.join(groupsDir, fileName)
+
+            // 如果源路径包含 questions/groups 前缀，直接复制
+            // 如果不包含，可能是从其他地方找到的，复制到 media/questions/groups 目录下
+            fs.copyFileSync(srcPath, destPath)
+            console.log(`[Main Process] ✓ 提取题目组音频: ${destPath}`)
+            extractedCount++
+          } else {
+            console.warn(`[Main Process] ⚠️ 题目组音频文件不存在: ${group.audioPath}`)
+          }
+        }
+      }
+      console.log(`[Main Process] ✓ 题目组音频提取完成，共提取 ${extractedCount} 个文件`)
     }
 
     // 提取题目媒体文件（支持新格式：media数组）
@@ -4070,7 +4239,7 @@ class PaperService {
             // 先尝试直接使用 mediaPath（如果 ZIP 包中已经是完整路径）
             let srcPath = path.join(tempDir, media.mediaPath)
             console.log(`[Main Process] 🔍 [extractMediaFiles] 尝试路径1: ${srcPath}`)
-            
+
             if (!fs.existsSync(srcPath)) {
               // 如果路径不存在，尝试从 ZIP 包的根目录查找（ZIP 包中可能没有 questions/ 前缀）
               const fileName = path.basename(media.mediaPath)
@@ -4100,7 +4269,7 @@ class PaperService {
                 console.error(`[Main Process] ❌ [extractMediaFiles] 递归查找失败:`, error)
               }
             }
-            
+
             if (srcPath && fs.existsSync(srcPath)) {
               const fileName = path.basename(media.mediaPath)
               // 根据mediaType分类存储
@@ -4138,7 +4307,7 @@ class PaperService {
       // 这是为了兼容后端没有在 questions.json 中填充 media 数组的情况
       if (!question.media || !Array.isArray(question.media) || question.media.length === 0) {
         console.log(`[Main Process] 📦 [extractMediaFiles] 题目 ${question.id} 的 media 数组为空，尝试扫描 ZIP 包中的 questions 目录`)
-        
+
         // 尝试多个可能的源路径
         const possibleSrcDirs = [
           path.join(tempDir, 'questions', `q_${question.id}`),
@@ -4146,7 +4315,7 @@ class PaperService {
           path.join(tempDir, 'questions', `q_${question.questionId || question.id}`),
           path.join(tempDir, 'media', 'questions', `q_${question.questionId || question.id}`)
         ]
-        
+
         let foundFiles = false
         for (const srcDir of possibleSrcDirs) {
           if (fs.existsSync(srcDir)) {
@@ -4157,7 +4326,7 @@ class PaperService {
                 const ext = path.extname(f).toLowerCase()
                 return ext === '.mp3' || ext === '.wav' || ext === '.m4a' || ext === '.aac' || ext === '.ogg'
               })
-              
+
               if (audioFiles.length > 0) {
                 console.log(`[Main Process] 📦 [extractMediaFiles] 在 ${srcDir} 中找到 ${audioFiles.length} 个音频文件`)
                 for (const audioFile of audioFiles) {
@@ -4174,7 +4343,7 @@ class PaperService {
             }
           }
         }
-        
+
         // 如果以上路径都没找到，尝试递归查找 questions/q_{questionId}/ 目录
         if (!foundFiles) {
           try {
@@ -4195,7 +4364,7 @@ class PaperService {
               }
               return null
             }
-            
+
             const foundDir = findQuestionDir(tempDir, question.id)
             if (foundDir && fs.existsSync(foundDir)) {
               console.log(`[Main Process] ✓ [extractMediaFiles] 递归查找到题目目录: ${foundDir}`)
@@ -4204,7 +4373,7 @@ class PaperService {
                 const ext = path.extname(f).toLowerCase()
                 return ext === '.mp3' || ext === '.wav' || ext === '.m4a' || ext === '.aac' || ext === '.ogg'
               })
-              
+
               if (audioFiles.length > 0) {
                 console.log(`[Main Process] 📦 [extractMediaFiles] 在 ${foundDir} 中找到 ${audioFiles.length} 个音频文件`)
                 for (const audioFile of audioFiles) {
@@ -4234,12 +4403,12 @@ class PaperService {
                   // 保留完整的目录结构（例如：options/q_327307266/xxx.mp3）
                   const destPath = path.join(mediaDir, media.mediaPath)
                   const destDir = path.dirname(destPath)
-                  
+
                   // 确保目标目录存在
                   if (!fs.existsSync(destDir)) {
                     fs.mkdirSync(destDir, { recursive: true })
                   }
-                  
+
                   fs.copyFileSync(srcPath, destPath)
                   console.log(`[Main Process] ✓ 提取选项媒体: ${destPath}`)
                 } else {
@@ -4296,12 +4465,12 @@ class PaperService {
       const saveMedia = (mediaData) => {
         // 对于不需要 question_id 的媒体类型（7-卷别名称音频，8-大题说明音频，9-中场音频），使用 0 作为默认值
         // 因为 question_id 字段是 NOT NULL，不能为 null
-        const questionId = mediaData.questionId || 
+        const questionId = mediaData.questionId ||
           (mediaData.mediaType === 7 || mediaData.mediaType === 8 || mediaData.mediaType === 9 ? 0 : null)
-        
+
         // 如果 questionId 仍然为 null，说明是其他类型但没有提供 questionId，使用 0 作为默认值
         const finalQuestionId = questionId !== null ? questionId : 0
-        
+
         const mediaStmt = this.db.prepare(`
           INSERT INTO question_media 
           (question_id, paper_id, volume_id, section_id, intermission_id,
@@ -4311,7 +4480,7 @@ class PaperService {
            is_compressed, storage_type, create_time)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
-        
+
         mediaStmt.run(
           finalQuestionId,
           mediaData.paperId || null,
@@ -4360,7 +4529,7 @@ class PaperService {
           const volumeRecord = this.db.prepare(`
             SELECT id FROM paper_volume WHERE paper_id = ? AND volume_code = ? LIMIT 1
           `).get(paperId, volume.volumeCode)
-          
+
           if (volumeRecord && volume.volumeMedia && Array.isArray(volume.volumeMedia)) {
             for (const media of volume.volumeMedia) {
               const fileName = path.basename(media.mediaPath || '')
@@ -4388,7 +4557,7 @@ class PaperService {
           const sectionRecord = this.db.prepare(`
             SELECT id FROM paper_section WHERE paper_id = ? AND (volume_code = ? OR volume_id = ?) AND section_name = ? LIMIT 1
           `).get(paperId, section.volumeCode || '', section.volumeId || null, section.sectionName || section.section_name)
-          
+
           if (sectionRecord) {
             // 优先处理 instructionAudioPath（单个路径字符串，新格式）
             if (section.instructionAudioPath) {
@@ -4442,7 +4611,7 @@ class PaperService {
           const intermissionRecord = this.db.prepare(`
             SELECT id FROM paper_intermission WHERE paper_id = ? AND from_volume = ? AND to_volume = ? LIMIT 1
           `).get(paperId, intermission.fromVolume, intermission.toVolume)
-          
+
           if (intermissionRecord && intermission.intermissionMedia && Array.isArray(intermission.intermissionMedia)) {
             for (const media of intermission.intermissionMedia) {
               const fileName = path.basename(media.mediaPath || '')
@@ -4478,7 +4647,7 @@ class PaperService {
             } else {
               relativePath = `media/${paperCode}/questions/q_${questionId}/${fileName}`
             }
-            
+
             saveMedia({
               questionId,
               paperId,
@@ -4577,7 +4746,7 @@ class PaperService {
           const sectionRecord = this.db.prepare(`
             SELECT id FROM paper_section WHERE paper_id = ? AND volume_code = ? AND section_name = ? LIMIT 1
           `).get(paperId, section.volumeCode, section.sectionName)
-          
+
           if (sectionRecord && section.questions && Array.isArray(section.questions)) {
             // 更新该大题下的所有题目的section_id和section_order
             for (let i = 0; i < section.questions.length; i++) {
@@ -4627,7 +4796,7 @@ class PaperService {
    */
   addToCache(key, data) {
     const dataSize = JSON.stringify(data).length
-    
+
     // 如果缓存已满，删除最旧的项
     while (this.cacheSize + dataSize > MAX_CACHE_SIZE && this.extractCache.size > 0) {
       const firstKey = this.extractCache.keys().next().value
@@ -4678,26 +4847,26 @@ class PaperService {
   async scanAndImportLocalPackages() {
     try {
       console.log('开始扫描本地 paper_packages 目录，查找手动放置的ZIP包...')
-      
+
       if (!fs.existsSync(this.packageBasePath)) {
         console.log('paper_packages 目录不存在，跳过扫描')
         return { imported: 0, skipped: 0, errors: 0 }
       }
-      
+
       const files = fs.readdirSync(this.packageBasePath)
       const zipFiles = files.filter(file => file.endsWith('.zip'))
-      
+
       if (zipFiles.length === 0) {
         console.log('未找到ZIP文件')
         return { imported: 0, skipped: 0, errors: 0 }
       }
-      
+
       console.log(`找到 ${zipFiles.length} 个ZIP文件`)
-      
+
       let imported = 0
       let skipped = 0
       let errors = 0
-      
+
       for (const zipFile of zipFiles) {
         try {
           // 解析文件名：{paperCode}_v{version}.zip
@@ -4707,65 +4876,65 @@ class PaperService {
             skipped++
             continue
           }
-          
+
           const paperCode = match[1]
           const version = parseInt(match[2], 10)
-          
+
           if (!paperCode || isNaN(version)) {
             console.warn(`无法解析文件名，跳过: ${zipFile}`)
             skipped++
             continue
           }
-          
+
           // 检查本地paper表中是否有该试卷记录
           const paper = this.db.prepare(`
             SELECT id FROM paper WHERE paper_code = ? LIMIT 1
           `).get(paperCode)
-          
+
           if (!paper || !paper.id) {
             console.warn(`本地paper表中没有找到试卷记录: ${paperCode}，跳过导入: ${zipFile}`)
             console.warn(`  提示：请先确保paper表中有该试卷的记录（可以通过同步试卷列表获得）`)
             skipped++
             continue
           }
-          
+
           // 检查是否已存在该版本的记录
           const existingPackage = this.db.prepare(`
             SELECT id, version, package_hash FROM paper_package 
             WHERE paper_code = ? AND version = ? AND is_active = 1
             LIMIT 1
           `).get(paperCode, version)
-          
+
           if (existingPackage) {
             console.log(`试卷包 ${paperCode} v${version} 已存在于数据库中，跳过导入: ${zipFile}`)
             skipped++
             continue
           }
-          
+
           // 读取ZIP文件并计算hash
           const filePath = path.join(this.packageBasePath, zipFile)
           const fileStats = fs.statSync(filePath)
           const fileBuffer = fs.readFileSync(filePath)
           const packageHash = this.calculateHash(fileBuffer)
           const packageSize = fileStats.size
-          
+
           // 保存到数据库
           const relativePath = path.relative(app.getPath('userData'), filePath)
           const syncTime = Date.now()
-          
+
           // 先禁用旧版本的记录（如果有，只禁用完整包的记录，不包括快速包）
           this.db.prepare(`
             UPDATE paper_package 
             SET is_active = 0 
             WHERE paper_id = ? AND paper_code = ? AND is_active = 1
           `).run(paper.id, paperCode)
-          
+
           // 检查是否已存在相同版本的记录
           const existingRecord = this.db.prepare(`
             SELECT id FROM paper_package
             WHERE paper_id = ? AND paper_code = ? AND version = ?
           `).get(paper.id, paperCode, version)
-          
+
           try {
             if (existingRecord) {
               // 更新现有记录
@@ -4808,7 +4977,7 @@ class PaperService {
                     DELETE FROM paper_package
                     WHERE paper_id = ? AND paper_code = ?
                   `).run(paper.id, paperCode)
-                  
+
                   // 重新插入
                   this.db.prepare(`
                     INSERT INTO paper_package 
@@ -4830,13 +4999,13 @@ class PaperService {
                 }
               }
             }
-            
+
             // 验证记录是否已保存到 paper_package 表
             const verifyRecord = this.db.prepare(`
               SELECT id, paper_code, version, is_active FROM paper_package
               WHERE paper_id = ? AND paper_code = ? AND version = ?
             `).get(paper.id, paperCode, version)
-            
+
             if (verifyRecord) {
               console.log(`✓ 验证：完整包已保存到 paper_package 表，id=${verifyRecord.id}, paper_code=${verifyRecord.paper_code}, version=${verifyRecord.version}, is_active=${verifyRecord.is_active}`)
             } else {
@@ -4850,7 +5019,7 @@ class PaperService {
             console.error(`错误详情:`, error.message)
             throw error
           }
-          
+
           // 更新paper表的版本信息
           this.db.prepare(`
             UPDATE paper 
@@ -4863,7 +5032,7 @@ class PaperService {
             syncTime,
             paperCode
           )
-          
+
           console.log(`✓ 成功导入手动放置的ZIP包: ${zipFile} (${paperCode} v${version}, ${(packageSize / 1024 / 1024).toFixed(2)}MB)`)
           imported++
         } catch (error) {
@@ -4871,7 +5040,7 @@ class PaperService {
           errors++
         }
       }
-      
+
       console.log(`扫描完成: 导入 ${imported} 个，跳过 ${skipped} 个，错误 ${errors} 个`)
       return { imported, skipped, errors }
     } catch (error) {
@@ -4886,7 +5055,7 @@ class PaperService {
   async cleanupOldVersions() {
     try {
       const cutoffTime = Date.now() - (CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000)
-      
+
       // 查询需要清理的试卷包
       const oldPackages = this.db.prepare(`
         SELECT paper_code, version, package_path, storage_type
@@ -4956,24 +5125,24 @@ class PaperService {
   async refreshPaperVersionFromServer(paperId, token) {
     try {
       console.log(`🔄 [refreshPaperVersionFromServer] 开始同步试卷版本信息: paperId=${paperId}`)
-      
+
       // 1. 获取本地试卷信息
       const localPaper = this.db.prepare(`
         SELECT id, paper_code, paper_name, version, package_hash, package_size
         FROM paper
         WHERE id = ?
       `).get(paperId)
-      
+
       if (!localPaper) {
         console.warn(`[refreshPaperVersionFromServer] 本地未找到试卷: paperId=${paperId}`)
         return { success: false, message: '本地未找到试卷信息' }
       }
-      
+
       const paperCode = localPaper.paper_code
       const localVersion = localPaper.version || 0
-      
+
       console.log(`[refreshPaperVersionFromServer] 本地版本: v${localVersion}, paperCode=${paperCode}`)
-      
+
       // 2. 从服务器获取最新试卷信息
       try {
         const response = await axios.post(
@@ -4991,52 +5160,52 @@ class PaperService {
             timeout: 10000 // 10秒超时
           }
         )
-        
+
         if (response.data && response.data.code === 200) {
           let paperList = response.data.rows || response.data.data || []
-          
+
           // 查找目标试卷
-          const remotePaper = paperList.find(p => 
+          const remotePaper = paperList.find(p =>
             (p.paperCode === paperCode || p.paper_code === paperCode) ||
             (p.id === paperId)
           )
-          
+
           if (!remotePaper) {
             console.warn(`[refreshPaperVersionFromServer] 服务器未找到试卷: paperCode=${paperCode}`)
-            return { 
-              success: true, 
-              localVersion, 
+            return {
+              success: true,
+              localVersion,
               remoteVersion: localVersion,
               needsUpdate: false,
               message: '服务器未找到对应试卷，使用本地版本'
             }
           }
-          
+
           const remoteVersion = remotePaper.version || 0
           const remoteHash = remotePaper.packageHash || remotePaper.package_hash || null
           const remoteSize = remotePaper.packageSize || remotePaper.package_size || null
-          
+
           console.log(`[refreshPaperVersionFromServer] 服务器版本: v${remoteVersion}, hash=${remoteHash || '无'}`)
-          
+
           // 3. 判断是否需要更新
-          const needsUpdate = remoteVersion > localVersion || 
+          const needsUpdate = remoteVersion > localVersion ||
             (remoteVersion === localVersion && remoteHash && remoteHash !== localPaper.package_hash)
-          
+
           if (needsUpdate) {
             console.log(`[refreshPaperVersionFromServer] 检测到新版本，更新本地paper表: v${localVersion} -> v${remoteVersion}`)
-            
+
             // 更新本地paper表
             this.db.prepare(`
               UPDATE paper 
               SET version = ?, package_hash = ?, package_size = ?
               WHERE id = ?
             `).run(remoteVersion, remoteHash, remoteSize, paperId)
-            
+
             console.log(`✓ [refreshPaperVersionFromServer] 本地paper表已更新`)
           } else {
             console.log(`[refreshPaperVersionFromServer] 本地版本已是最新: v${localVersion}`)
           }
-          
+
           return {
             success: true,
             localVersion,
@@ -5057,10 +5226,10 @@ class PaperService {
         }
       } catch (error) {
         // 网络错误，可能是离线状态
-        if (error.message.includes('网络') || error.message.includes('ECONNREFUSED') || 
-            error.message.includes('timeout') || error.message.includes('ENOTFOUND') ||
-            error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT' ||
-            error.message.includes('Network Error')) {
+        if (error.message.includes('网络') || error.message.includes('ECONNREFUSED') ||
+          error.message.includes('timeout') || error.message.includes('ENOTFOUND') ||
+          error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT' ||
+          error.message.includes('Network Error')) {
           console.log(`[refreshPaperVersionFromServer] 离线状态，使用本地版本: v${localVersion}`)
           return {
             success: true,
@@ -5087,32 +5256,32 @@ class PaperService {
   async deleteAllOldVersions(paperCode, currentVersion) {
     try {
       console.log(`🧹 [deleteAllOldVersions] 开始删除所有旧版本: ${paperCode}，保留版本 v${currentVersion}`)
-      
+
       // 查询所有旧版本
       const oldVersions = this.db.prepare(`
         SELECT DISTINCT version FROM paper_package 
         WHERE paper_code = ? AND version < ?
         ORDER BY version DESC
       `).all(paperCode, currentVersion)
-      
+
       if (oldVersions.length === 0) {
         console.log(`✓ [deleteAllOldVersions] 没有旧版本需要删除`)
         return
       }
-      
+
       console.log(`📦 [deleteAllOldVersions] 找到 ${oldVersions.length} 个旧版本: ${oldVersions.map(v => `v${v.version}`).join(', ')}`)
-      
+
       // 删除每个旧版本
       for (const versionRecord of oldVersions) {
         await this.deleteOldVersionPackage(paperCode, versionRecord.version)
       }
-      
+
       console.log(`✓ [deleteAllOldVersions] 所有旧版本删除完成`)
     } catch (error) {
       console.error(`❌ [deleteAllOldVersions] 删除所有旧版本失败:`, error)
     }
   }
-  
+
   /**
    * 清理损坏的试卷包（保留paper表的版本信息，以便重新下载）
    * @param {string} paperCode - 试卷编码
@@ -5121,10 +5290,10 @@ class PaperService {
   async cleanCorruptedPackage(paperCode, version) {
     try {
       console.log(`🧹 [cleanCorruptedPackage] 清理损坏的试卷包: ${paperCode} v${version}`)
-      
+
       const app = require('electron').app || require('@electron/remote').app
       const userDataPath = app.getPath('userData')
-      
+
       // 1. 删除媒体文件目录
       const mediaDir = path.join(userDataPath, 'media', paperCode)
       if (fs.existsSync(mediaDir)) {
@@ -5136,7 +5305,7 @@ class PaperService {
           console.warn(`⚠️ 删除媒体文件失败: ${error.message}`)
         }
       }
-      
+
       // 2. 删除临时文件目录
       const tempDir = path.join(userDataPath, 'temp', paperCode)
       if (fs.existsSync(tempDir)) {
@@ -5148,7 +5317,7 @@ class PaperService {
           console.warn(`⚠️ 删除临时文件失败: ${error.message}`)
         }
       }
-      
+
       // 3. 删除快速启动包
       const quickStartFileName = `${paperCode}_v${version}_quick.zip`
       const quickStartPath = path.join(this.packageBasePath, quickStartFileName)
@@ -5161,11 +5330,11 @@ class PaperService {
           console.warn(`⚠️ 删除快速启动包失败: ${error.message}`)
         }
       }
-      
+
       // 4. 删除完整包文件
       const packageFileName = `${paperCode}_v${version}.zip`
       const packagePath = path.join(this.packageBasePath, packageFileName)
-      
+
       if (fs.existsSync(packagePath)) {
         console.log(`🧹 删除完整包文件: ${packageFileName}`)
         try {
@@ -5175,7 +5344,7 @@ class PaperService {
           console.warn(`⚠️ 删除完整包文件失败: ${error.message}`)
         }
       }
-      
+
       // 5. 从数据库中删除 paper_package 表的记录
       try {
         this.db.prepare(`
@@ -5186,16 +5355,16 @@ class PaperService {
       } catch (error) {
         console.warn(`⚠️ 删除 paper_package 记录失败: ${error.message}`)
       }
-      
+
       // 注意：不删除 paper 表的记录，保留版本信息，这样系统会检测到需要重新下载
       console.log(`⚠️ 保留 paper 表的版本信息 (version=${version})，以便重新下载`)
-      
+
       console.log(`✓ [cleanCorruptedPackage] 损坏的试卷包清理完成`)
     } catch (error) {
       console.error(`❌ [cleanCorruptedPackage] 清理损坏的试卷包失败:`, error)
     }
   }
-  
+
   /**
    * 删除旧版本的完整包
    * @param {string} paperCode - 试卷编码
@@ -5204,10 +5373,10 @@ class PaperService {
   async deleteOldVersionPackage(paperCode, oldVersion) {
     try {
       console.log(`🧹 [deleteOldVersionPackage] 删除旧版本数据: ${paperCode} v${oldVersion}`)
-      
+
       const app = require('electron').app || require('@electron/remote').app
       const userDataPath = app.getPath('userData')
-      
+
       // 1. 删除旧版本的媒体文件目录
       const mediaDir = path.join(userDataPath, 'media', paperCode)
       if (fs.existsSync(mediaDir)) {
@@ -5219,7 +5388,7 @@ class PaperService {
           console.warn(`⚠️ 删除媒体文件失败: ${error.message}`)
         }
       }
-      
+
       // 2. 删除旧版本的临时文件目录
       const tempDir = path.join(userDataPath, 'temp', paperCode)
       if (fs.existsSync(tempDir)) {
@@ -5231,7 +5400,7 @@ class PaperService {
           console.warn(`⚠️ 删除临时文件失败: ${error.message}`)
         }
       }
-      
+
       // 3. 删除旧版本的快速启动包
       const quickStartFileName = `${paperCode}_v${oldVersion}_quick.zip`
       const quickStartPath = path.join(this.packageBasePath, quickStartFileName)
@@ -5244,11 +5413,11 @@ class PaperService {
           console.warn(`⚠️ 删除快速启动包失败: ${error.message}`)
         }
       }
-      
+
       // 4. 删除旧版本的完整包文件
       const oldPackageFileName = `${paperCode}_v${oldVersion}.zip`
       const oldPackagePath = path.join(this.packageBasePath, oldPackageFileName)
-      
+
       if (fs.existsSync(oldPackagePath)) {
         console.log(`🧹 删除旧版本完整包文件: ${oldPackageFileName}`)
         try {
@@ -5258,7 +5427,7 @@ class PaperService {
           console.warn(`⚠️ 删除完整包文件失败: ${error.message}`)
         }
       }
-      
+
       // 5. 从数据库中删除旧版本的记录
       try {
         this.db.prepare(`
@@ -5269,7 +5438,7 @@ class PaperService {
       } catch (error) {
         console.warn(`⚠️ 删除数据库记录失败: ${error.message}`)
       }
-      
+
       console.log(`✓ [deleteOldVersionPackage] 旧版本数据删除完成`)
     } catch (error) {
       console.error(`❌ [deleteOldVersionPackage] 删除旧版本数据失败:`, error)

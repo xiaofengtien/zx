@@ -141,10 +141,10 @@ export function downloadPaperPackageStream(paperId, onProgress) {
   return new Promise((resolve, reject) => {
     const token = getToken()
     const baseURL = process.env.VUE_APP_BASE_API
-    
+
     // 首先获取文件大小（通过HEAD请求或第一次请求）
     const chunkSize = 10 * 1024 * 1024 // 10MB分片
-    
+
     // 构建请求头
     const headers = {
       'Content-Type': 'application/json'
@@ -152,20 +152,20 @@ export function downloadPaperPackageStream(paperId, onProgress) {
     if (token) {
       headers['Authorization'] = 'Bearer ' + token
     }
-    
+
     // 先发送一个HEAD请求获取文件大小（如果HEAD不支持，则使用GET请求的第一个字节范围）
     fetch(`${baseURL}/paper/downloadPackageStream?paperId=${paperId}`, {
       method: 'HEAD',
       headers: headers
     }).then(headResponse => {
       let fileSize = null
-      
+
       // 尝试从Content-Length获取文件大小
       const contentLength = headResponse.headers.get('Content-Length')
       if (contentLength) {
         fileSize = parseInt(contentLength, 10)
       }
-      
+
       // 如果HEAD请求返回200但没有Content-Length，尝试从Content-Range获取
       if (!fileSize && headResponse.status === 200) {
         const contentRange = headResponse.headers.get('Content-Range')
@@ -177,24 +177,24 @@ export function downloadPaperPackageStream(paperId, onProgress) {
           }
         }
       }
-      
+
       if (!fileSize) {
         // 如果无法获取文件大小，回退到普通下载
         console.warn('无法获取文件大小，使用普通下载')
         return downloadPaperPackage({ id: paperId }).then(resolve).catch(reject)
       }
-      
+
       // 分片下载
       const chunks = []
       let downloadedBytes = 0
       const totalChunks = Math.ceil(fileSize / chunkSize)
-      
+
       // 下载所有分片
       const downloadChunks = []
       for (let i = 0; i < totalChunks; i++) {
         const start = i * chunkSize
         const end = Math.min(start + chunkSize - 1, fileSize - 1)
-        
+
         downloadChunks.push(
           fetch(`${baseURL}/paper/downloadPackageStream?paperId=${paperId}`, {
             method: 'GET',
@@ -210,17 +210,17 @@ export function downloadPaperPackageStream(paperId, onProgress) {
           }).then(buffer => {
             chunks[i] = buffer
             downloadedBytes += buffer.byteLength
-            
+
             // 进度回调
             if (onProgress) {
               onProgress(downloadedBytes, fileSize)
             }
-            
+
             return buffer
           })
         )
       }
-      
+
       // 等待所有分片下载完成
       Promise.all(downloadChunks).then(() => {
         // 合并所有分片
@@ -231,7 +231,7 @@ export function downloadPaperPackageStream(paperId, onProgress) {
           mergedArray.set(new Uint8Array(chunks[i]), offset)
           offset += chunks[i].byteLength
         }
-        
+
         // 创建Blob
         const blob = new Blob([mergedArray], { type: 'application/zip' })
         resolve(blob)
@@ -428,3 +428,189 @@ export function getQuestionMediaByIntermissionId(data) {
   })
 }
 
+// ========== 智能导入 API ==========
+// 检查解析服务状态
+export function getParseServiceStatus() {
+  return request({
+    url: '/paper/import/status',
+    method: 'get'
+  })
+}
+
+// 解析 Word 文件（上传文件并获取预览数据）
+export function parseImportFiles(wordFile, audioFile) {
+  const formData = new FormData()
+  formData.append('wordFile', wordFile)
+  if (audioFile) {
+    formData.append('audioFile', audioFile)
+  }
+  return request({
+    url: '/paper/import/parse',
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    },
+    timeout: 300000 // 5分钟超时（解析大文件+音频切片可能较慢）
+  })
+}
+
+// 确认导入试卷
+export function confirmImport(data) {
+  return request({
+    url: '/paper/import/confirm',
+    method: 'post',
+    data: data
+  })
+}
+
+// ========== 异步解析 API ==========
+// 提交解析任务（异步）
+export function submitParseTask(wordFile, audioFile, audioOssUrl) {
+  const formData = new FormData()
+  formData.append('wordFile', wordFile)
+  if (audioFile) {
+    formData.append('audioFile', audioFile)
+  }
+  if (audioOssUrl) {
+    formData.append('audioOssUrl', audioOssUrl)
+  }
+  return request({
+    url: '/paper/import/submitTask',
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    },
+    timeout: 60000 // 1分钟超时（仅上传文件）
+  })
+}
+
+// 获取解析任务状态
+export function getParseTaskStatus(taskId) {
+  return request({
+    url: `/paper/import/task/${taskId}`,
+    method: 'get'
+  })
+}
+
+// 取消解析任务
+export function cancelParseTask(taskId) {
+  return request({
+    url: `/paper/import/task/${taskId}/cancel`,
+    method: 'post'
+  })
+}
+
+// 批量创建题目（将解析结果保存到题库）
+export function createQuestionsFromParse(parseResult, categoryId, subjectId, defaultQuestionType, listeningOnly) {
+  return request({
+    url: '/paper/import/createQuestions',
+    method: 'post',
+    data: {
+      parseResult,
+      categoryId,
+      subjectId,
+      defaultQuestionType,
+      listeningOnly
+    }
+  })
+}
+
+// ========== 多卷别顺序导入（会话管理）API ==========
+
+// 开始导入会话
+export function startImportSession() {
+  return request({
+    url: '/paper/import/session/start',
+    method: 'post'
+  })
+}
+
+// 添加卷别到导入会话
+export function addVolumeToSession(data) {
+  return request({
+    url: '/paper/import/session/addVolume',
+    method: 'post',
+    data: data
+  })
+}
+
+// 获取导入会话状态
+export function getImportSession(sessionKey) {
+  return request({
+    url: `/paper/import/session/${sessionKey}`,
+    method: 'get'
+  })
+}
+
+// 完成导入会话（创建试卷和题目）
+export function finalizeImportSession(data) {
+  return request({
+    url: '/paper/import/session/finalize',
+    method: 'post',
+    data: data
+  })
+}
+
+// ========== 题目组 API ==========
+
+// 根据大题ID查询题目组列表
+export function listQuestionGroupsBySectionId(sectionId) {
+  return request({
+    url: `/paper/questionGroup/list/${sectionId}`,
+    method: 'get'
+  })
+}
+
+// 根据试卷ID查询所有题目组
+export function listQuestionGroupsByPaperId(paperId) {
+  return request({
+    url: `/paper/questionGroup/listByPaper/${paperId}`,
+    method: 'get'
+  })
+}
+
+// 新增题目组
+export function addQuestionGroup(data) {
+  return request({
+    url: '/paper/questionGroup/add',
+    method: 'post',
+    data: data
+  })
+}
+
+// 修改题目组
+export function updateQuestionGroup(data) {
+  return request({
+    url: '/paper/questionGroup/edit',
+    method: 'post',
+    data: data
+  })
+}
+
+// 删除题目组
+export function deleteQuestionGroup(id) {
+  return request({
+    url: `/paper/questionGroup/${id}`,
+    method: 'delete'
+  })
+}
+
+// 批量保存题目组
+export function batchSaveQuestionGroups(data) {
+  return request({
+    url: '/paper/questionGroup/batchSave',
+    method: 'post',
+    data: data
+  })
+}
+
+// 生成 TTS
+export function generateTTS(data) {
+  return request({
+    url: '/paper/tool/tts',
+    method: 'post',
+    data: data
+  })
+}

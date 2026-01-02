@@ -11,6 +11,7 @@ import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import com.ruoyi.common.constant.HttpStatus;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.text.Convert;
@@ -141,5 +142,43 @@ public class GlobalExceptionHandler
     public AjaxResult handleDemoModeException(DemoModeException e)
     {
         return AjaxResult.error("演示模式，不允许操作");
+    }
+
+    /**
+     * 文件上传大小超限异常
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public AjaxResult handleMaxUploadSizeExceededException(MaxUploadSizeExceededException e, HttpServletRequest request)
+    {
+        String requestURI = request.getRequestURI();
+        log.error("请求地址'{}',文件上传大小超过限制.", requestURI, e);
+        // 提取文件大小信息
+        String errorMessage = e.getMessage();
+        String friendlyMessage = "文件大小超过限制";
+        
+        // 尝试从异常消息中提取大小信息
+        if (errorMessage != null) {
+            if (errorMessage.contains("exceeds the configured maximum")) {
+                // 提取配置的最大值
+                String maxSizeStr = "10MB"; // 默认提示（当前限制为10MB）
+                // 10MB = 10485760 bytes
+                if (errorMessage.contains("10485760")) {
+                    maxSizeStr = "10MB";
+                } else if (errorMessage.contains("20971520")) {
+                    maxSizeStr = "20MB";
+                } else if (errorMessage.contains("52428800")) {
+                    maxSizeStr = "50MB";
+                } else if (errorMessage.contains("209715200")) {
+                    maxSizeStr = "200MB";
+                }
+                friendlyMessage = String.format("文件大小超过限制（最大 %s），请选择较小的文件！", maxSizeStr);
+            } else {
+                friendlyMessage = "文件大小超过限制（最大 10MB），请选择较小的文件！";
+            }
+        } else {
+            friendlyMessage = "文件大小超过限制（最大 10MB），请选择较小的文件！";
+        }
+        
+        return AjaxResult.error(friendlyMessage);
     }
 }

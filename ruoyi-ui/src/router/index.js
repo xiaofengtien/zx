@@ -47,6 +47,11 @@ export const constantRoutes = [
     hidden: true
   },
   {
+    path: '/forgotPassword',
+    component: () => import('@/views/forgotPassword'),
+    hidden: true
+  },
+  {
     path: '/register',
     component: () => import('@/views/register'),
     hidden: true
@@ -85,6 +90,51 @@ export const constantRoutes = [
         component: () => import('@/views/system/user/profile/index'),
         name: 'Profile',
         meta: { title: '个人中心', icon: 'user' }
+      }
+    ]
+  },
+  {
+    path: '/exam/paper/add',
+    component: Layout,
+    hidden: true,
+    children: [
+      {
+        path: '',
+        component: () => import('@/views/exam/paper/add'),
+        name: 'PaperAdd',
+        meta: { title: '添加试卷', activeMenu: '/exam/paper' }
+      }
+    ]
+  },
+  {
+    path: '/exam/paper/edit',
+    component: Layout,
+    hidden: true,
+    children: [
+      {
+        path: '',
+        component: () => import('@/views/exam/paper/edit'),
+        name: 'PaperEdit',
+        meta: { title: '修改试卷', activeMenu: '/exam/paper' }
+      },
+      {
+        path: ':paperId(\\d+)',
+        component: () => import('@/views/exam/paper/edit'),
+        name: 'PaperEditWithId',
+        meta: { title: '修改试卷', activeMenu: '/exam/paper' }
+      }
+    ]
+  },
+  {
+    path: '/exam/paper/import',
+    component: Layout,
+    hidden: true,
+    children: [
+      {
+        path: '',
+        component: () => import('@/views/exam/paper/import'),
+        name: 'PaperImport',
+        meta: { title: '智能导入', activeMenu: '/exam/paper' }
       }
     ]
   }

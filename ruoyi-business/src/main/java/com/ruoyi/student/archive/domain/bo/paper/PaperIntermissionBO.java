@@ -13,7 +13,7 @@ import java.io.Serializable;
  */
 @Data
 public class PaperIntermissionBO implements Serializable {
-    
+
     private static final long serialVersionUID = 1L;
 
     /**
@@ -24,7 +24,6 @@ public class PaperIntermissionBO implements Serializable {
     /**
      * 试卷ID
      */
-    @NotNull(message = "试卷ID不能为空")
     private Integer paperId;
 
     /**
@@ -36,6 +35,16 @@ public class PaperIntermissionBO implements Serializable {
      * 目标卷别ID（关联paper_volume.id）
      */
     private Integer toVolumeId;
+
+    /**
+     * 来源卷别临时ID（用于导入时关联，格式：temp_vol_1）
+     */
+    private String fromVolumeTempId;
+
+    /**
+     * 目标卷别临时ID（用于导入时关联，格式：temp_vol_2）
+     */
+    private String toVolumeTempId;
 
     /**
      * 来源卷别（A、B、C等，保留用于显示和兼容性）
@@ -53,10 +62,12 @@ public class PaperIntermissionBO implements Serializable {
     private String intermissionText;
 
     /**
+     * 中场时长（秒）
+     */
+    private Integer duration;
+
+    /**
      * 是否允许跳过（0-否，1-是）
      */
     private Integer canSkip;
 }
-
-
-

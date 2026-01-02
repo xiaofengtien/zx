@@ -155,6 +155,9 @@ public class PaperImportServiceImpl implements IPaperImportService {
                 fullData.getPaper().setBusinessId(confirmBO.getBusinessId());
             }
 
+            // 设置数据来源标识：智能导入的试卷标记为 asr_import
+            fullData.getPaper().setRemark("asr_import");
+
             // 调用现有服务创建试卷
             Integer paperId = paperService.createPaperWithFullData(fullData);
             log.info("试卷导入成功，ID: {}", paperId);
@@ -207,6 +210,10 @@ public class PaperImportServiceImpl implements IPaperImportService {
 
                     if (volume.getSections() != null) {
                         for (ParseResultDTO.ParsedSectionDTO section : volume.getSections()) {
+                            // 调试日志：打印大题的音频时长
+                            log.info("[createQuestionsFromParse] 大题 {} 音频时长: introAudioDuration={}",
+                                    section.getName(), section.getIntroAudioDuration());
+
                             // 创建 section 直接包含的题目
                             if (section.getQuestions() != null) {
                                 for (ParseResultDTO.ParsedQuestionDTO parsedQ : section.getQuestions()) {
@@ -799,7 +806,19 @@ public class PaperImportServiceImpl implements IPaperImportService {
             group.setIntroText((String) g.get("intro_text"));
             group.setHasAudio((Boolean) g.get("has_audio"));
             group.setStartIndex(toInteger(g.get("start_index")));
+            group.setStartIndex(toInteger(g.get("start_index")));
             group.setEndIndex(toInteger(g.get("end_index")));
+
+            // 支持 snake_case (Python) 和 camelCase (Frontend)
+            String groupName = (String) g.get("group_name");
+            if (groupName == null)
+                groupName = (String) g.get("groupName");
+            group.setGroupName(groupName);
+
+            Object answerTimeObj = g.get("answer_time");
+            if (answerTimeObj == null)
+                answerTimeObj = g.get("answerTime");
+            group.setAnswerTime(toInteger(answerTimeObj));
 
             // 转换组内的题目
             Object questionsObj = g.get("questions");
@@ -1053,6 +1072,8 @@ public class PaperImportServiceImpl implements IPaperImportService {
             java.util.Calendar cal = java.util.Calendar.getInstance();
             cal.add(java.util.Calendar.YEAR, 1);
             paperInfo.setEnableEndTime(cal.getTime());
+            // 设置数据来源标识：智能导入
+            paperInfo.setRemark("asr_import");
             fullData.setPaper(paperInfo);
 
             // 2.2 卷别列表
@@ -1085,13 +1106,48 @@ public class PaperImportServiceImpl implements IPaperImportService {
                 volumeBO.setVolumeName(volumeName);
                 volumeBO.setVolumeOrder(volumeOrder);
 
+                // 调试日志：打印解析结果中的卷别音频信息
+                log.info("=== 开始关联卷别[{}]音频 ===", volumeName);
                 if (parsedResult.getVolumes() != null && !parsedResult.getVolumes().isEmpty()) {
-                    ParseResultDTO.ParsedVolumeDTO volDTO = parsedResult.getVolumes().get(0);
-                    volumeBO.setVolumeAudioUrl(volDTO.getAudioUrl());
-                    volumeBO.setVolumeAudioPath(volDTO.getVolumeAudioPath());
-                    if (volDTO.getVolumeAudioDuration() != null) {
-                        volumeBO.setVolumeAudioDuration(volDTO.getVolumeAudioDuration().intValue());
+                    log.info("parsedResult.volumes 数量: {}", parsedResult.getVolumes().size());
+                    for (int vi = 0; vi < parsedResult.getVolumes().size(); vi++) {
+                        ParseResultDTO.ParsedVolumeDTO v = parsedResult.getVolumes().get(vi);
+                        log.info("  volumes[{}]: name='{}', audioUrl='{}'", vi, v.getName(), v.getAudioUrl());
                     }
+
+                    // 尝试通过名称匹配找到对应的 VolumeDTO
+                    ParseResultDTO.ParsedVolumeDTO matchedVol = null;
+                    if (volumeName != null) {
+                        for (ParseResultDTO.ParsedVolumeDTO v : parsedResult.getVolumes()) {
+                            if (volumeName.equals(v.getName())) {
+                                matchedVol = v;
+                                log.info("通过名称匹配到卷别: '{}'", volumeName);
+                                break;
+                            }
+                        }
+                    }
+                    // 如果名称未匹配，尝试通过索引匹配
+                    if (matchedVol == null && i < parsedResult.getVolumes().size()) {
+                        matchedVol = parsedResult.getVolumes().get(i);
+                        log.info("通过索引[{}]匹配到卷别: '{}'", i, matchedVol.getName());
+                    }
+
+                    // 如果找到了匹配的卷别，且有音频信息，则设置
+                    if (matchedVol != null) {
+                        String audioUrl = matchedVol.getAudioUrl();
+                        log.info("匹配到的卷别 audioUrl='{}', path='{}', duration={}",
+                                audioUrl, matchedVol.getVolumeAudioPath(), matchedVol.getVolumeAudioDuration());
+                        volumeBO.setVolumeAudioUrl(audioUrl);
+                        volumeBO.setVolumeAudioPath(matchedVol.getVolumeAudioPath());
+                        if (matchedVol.getVolumeAudioDuration() != null) {
+                            volumeBO.setVolumeAudioDuration(matchedVol.getVolumeAudioDuration().intValue());
+                        }
+                        log.info("已设置 volumeBO.volumeAudioUrl='{}'", volumeBO.getVolumeAudioUrl());
+                    } else {
+                        log.warn("未能匹配到卷别[{}]的 DTO", volumeName);
+                    }
+                } else {
+                    log.warn("parsedResult.volumes 为空或 null");
                 }
 
                 // 构建大题列表（从更新后的解析结果获取）
@@ -1100,11 +1156,12 @@ public class PaperImportServiceImpl implements IPaperImportService {
                         bo.getListeningOnly());
                 volumeBO.setSections(sectionBOs);
 
-                log.info("构建卷别 {} 完成: 大题数={}, 每大题题目数={}",
+                log.info("构建卷别 {} 完成: 大题数={}, 每大题题目数={}, 音频URL={}",
                         volumeName,
                         sectionBOs.size(),
                         sectionBOs.stream().mapToInt(s -> s.getQuestions() != null ? s.getQuestions().size() : 0)
-                                .sum());
+                                .sum(),
+                        volumeBO.getVolumeAudioUrl());
 
                 // 打印题目组信息
                 for (SectionDataBO sec : sectionBOs) {
@@ -1236,6 +1293,10 @@ public class PaperImportServiceImpl implements IPaperImportService {
                         if (group.getAudioDuration() != null) {
                             groupBO.setAudioDuration(group.getAudioDuration().intValue());
                         }
+
+                        // 这2个字段之前缺失导致没保存
+                        groupBO.setGroupName(group.getGroupName());
+                        groupBO.setAnswerTime(group.getAnswerTime());
 
                         // 收集组内题目的 questionId
                         List<Integer> selectedIds = new ArrayList<>();

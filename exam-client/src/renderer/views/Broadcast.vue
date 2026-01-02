@@ -85,23 +85,28 @@ function logToMain(level, ...args) {
 }
 
 // 重写 console.log, console.warn, console.error 以同时输出到主进程
-const originalLog = console.log
-const originalWarn = console.warn
-const originalError = console.error
+// 使用全局标记防止多次重写（导致日志重复输出）
+if (!window.__consoleLogOverridden) {
+  window.__consoleLogOverridden = true
+  
+  const originalLog = console.log
+  const originalWarn = console.warn
+  const originalError = console.error
 
-console.log = function(...args) {
-  originalLog.apply(console, args)
-  logToMain('info', ...args)
-}
+  console.log = function(...args) {
+    originalLog.apply(console, args)
+    logToMain('info', ...args)
+  }
 
-console.warn = function(...args) {
-  originalWarn.apply(console, args)
-  logToMain('warn', ...args)
-}
+  console.warn = function(...args) {
+    originalWarn.apply(console, args)
+    logToMain('warn', ...args)
+  }
 
-console.error = function(...args) {
-  originalError.apply(console, args)
-  logToMain('error', ...args)
+  console.error = function(...args) {
+    originalError.apply(console, args)
+    logToMain('error', ...args)
+  }
 }
 
 export default {
@@ -167,52 +172,48 @@ export default {
   methods: {
     async loadStudentInfo() {
       try {
-        // 首先从 localStorage 获取 userInfo（完全离线可用）
+        // 首先从 localStorage 获取 userInfo
         const userInfoStr = localStorage.getItem('userInfo')
         let userInfo = null
         if (userInfoStr) {
           userInfo = JSON.parse(userInfoStr)
-          // 学生姓名
-          this.studentName = userInfo.studentName || userInfo.name || userInfo.user?.nickName || userInfo.studentAccount || '未知'
-          // 考生号
-          this.studentId = userInfo.studentId || userInfo.studentAccount || userInfo.user?.userName || '未知'
-          // 座位号
-          this.seatNumber = userInfo.seatNumber || userInfo.seat_number || userInfo.assignedSeatNumber || ''
-          // 头像编号（如果有）
-          this.avatarNumber = userInfo.avatarNumber || userInfo.avatar_number || null
         }
 
-        // 如果座位号等信息缺失，尝试从本地数据库获取学员档案（完全离线可用）
-        if ((!this.seatNumber || !this.studentName || this.studentName === '未知') && userInfo) {
+        // 优先从本地数据库获取学员档案（student_name 字段是真正的学员姓名）
+        if (userInfo) {
           try {
             const userId = userInfo.user?.userId
-            const studentAccount = userInfo.studentAccount || userInfo.user?.userName
-
-            let archive = null
+            const account = userInfo.studentAccount || userInfo.user?.userName
+            let dbArchive = null
+            
             if (userId) {
-              archive = await ipcRenderer.invoke('archive:getByUserId', userId)
+              dbArchive = await ipcRenderer.invoke('archive:getByUserId', userId)
             }
-            if (!archive && studentAccount) {
-              archive = await ipcRenderer.invoke('archive:getByAccount', studentAccount)
+            if (!dbArchive && account) {
+              dbArchive = await ipcRenderer.invoke('archive:getByAccount', account)
             }
-
-            if (archive) {
-              // 补充缺失的信息
-              if (!this.studentName || this.studentName === '未知') {
-                this.studentName = archive.name || archive.student_name || this.studentName
-              }
-              if (!this.studentId || this.studentId === '未知') {
-                this.studentId = archive.student_account || archive.account || this.studentId
-              }
-              if (!this.seatNumber) {
-                this.seatNumber = archive.seat_number || archive.seatNumber || ''
-              }
-              console.log('✓ 从本地数据库补充学生信息:', { name: this.studentName, id: this.studentId, seat: this.seatNumber })
+            
+            if (dbArchive) {
+              // 从数据库获取学员信息（student_name 是姓名，student_account 是学号）
+              this.studentName = String(dbArchive.student_name || dbArchive.studentName || '')
+              this.studentId = String(dbArchive.student_account || dbArchive.studentAccount || account || '')
+              this.seatNumber = String(dbArchive.seat_number || dbArchive.seatNumber || '')
+              this.avatarNumber = dbArchive.avatar_number || dbArchive.avatarNumber || null
+              console.log('✓ 从本地数据库获取学生信息:', { name: this.studentName, id: this.studentId, seat: this.seatNumber })
             }
           } catch (error) {
-            console.warn('从本地数据库获取学员档案失败（不影响离线使用）:', error)
-            // 不影响主流程，继续使用 localStorage 中的信息
+            console.warn('从本地数据库获取学员档案失败:', error)
           }
+        }
+
+        // 如果数据库没有数据，使用 localStorage 作为 fallback
+        if (!this.studentName && userInfo) {
+          const archive = userInfo.archive || {}
+          this.studentName = String(archive.student_name || archive.studentName || '未知')
+          this.studentId = String(archive.student_account || archive.studentAccount || userInfo.user?.userName || '未知')
+          this.seatNumber = String(archive.seat_number || archive.seatNumber || '')
+          this.avatarNumber = archive.avatar_number || archive.avatarNumber || null
+          console.log('✓ 从 localStorage 获取学生信息:', { name: this.studentName, id: this.studentId, seat: this.seatNumber })
         }
       } catch (error) {
         console.error('加载学生信息失败:', error)
@@ -252,31 +253,59 @@ export default {
 
         console.log('📋 [loadPaperData] 所有卷别信息:', JSON.stringify(volumes, null, 2))
 
-        // 按 volumeOrder 排序
-        const sortedVolumes = volumes.sort((a, b) => (a.volumeOrder || 0) - (b.volumeOrder || 0))
+        // 按 volumeOrder 排序（不修改原数组）
+        const sortedVolumes = [...volumes].sort((a, b) => (a.volumeOrder || 0) - (b.volumeOrder || 0))
         
-        // 检查 localStorage 中是否已有当前卷别代码（从中场或卷别完成页面跳转过来时会设置）
+        // 检查 localStorage 中是否已有当前卷别信息（从中场或卷别完成页面跳转过来时会设置）
+        // 注意：只有从中场页面或卷别完成页面跳转过来时才使用 localStorage 中的值
+        // 从试卷选择页面进入时，应该清除旧值并使用第一个卷别
         const currentVolumeCode = localStorage.getItem('currentVolumeCode')
+        const currentVolumeId = localStorage.getItem('currentVolumeId')
+        const isFromIntermission = this.$route.query.fromIntermission === 'true'
+        const isFromVolumeComplete = this.$route.query.fromVolumeComplete === 'true'
         let targetVolume = null
         
-        if (currentVolumeCode) {
-          // 使用 localStorage 中的卷别代码找到对应的卷别
-          targetVolume = sortedVolumes.find(v => 
-            (v.volumeCode || v.volume_code) === currentVolumeCode
-          )
-          if (targetVolume) {
-            console.log('✓ 使用 localStorage 中的卷别代码:', currentVolumeCode)
-          } else {
-            console.warn('⚠️ localStorage 中的卷别代码无效，使用第一个卷别')
+        console.log('📋 [loadPaperData] 检查卷别来源:', {
+          currentVolumeCode,
+          currentVolumeId,
+          isFromIntermission,
+          isFromVolumeComplete,
+          routeQuery: this.$route.query
+        })
+        
+        // 只有从中场或卷别完成页面跳转过来时，才使用 localStorage 中的卷别信息
+        if (isFromIntermission || isFromVolumeComplete) {
+          // ID 优先，CODE 回退
+          if (currentVolumeId) {
+            targetVolume = sortedVolumes.find(v => String(v.id) === String(currentVolumeId))
+            if (targetVolume) {
+              console.log('✓ 使用 localStorage 中的 volumeId（来自中场/卷别完成）:', currentVolumeId)
+            }
+          }
+          if (!targetVolume && currentVolumeCode) {
+            targetVolume = sortedVolumes.find(v => (v.volumeCode || v.volume_code || '') === currentVolumeCode)
+            if (targetVolume) {
+              console.log('✓ 使用 localStorage 中的 volumeCode（来自中场/卷别完成）:', currentVolumeCode)
+            }
+          }
+          if (!targetVolume) {
+            console.warn('⚠️ localStorage 中的卷别信息无效，使用第一个卷别')
           }
         }
         
-        // 如果没有找到或没有设置，使用第一个卷别
+        // 如果没有找到或不是从中场/卷别完成页面跳转，使用第一个卷别
         if (!targetVolume) {
           targetVolume = sortedVolumes[0]
-          localStorage.setItem('currentVolumeCode', targetVolume.volumeCode || targetVolume.volume_code)
-          console.log('✓ 使用第一个卷别，保存到 localStorage:', targetVolume.volumeCode || targetVolume.volume_code)
         }
+
+        // 统一保存当前选中的卷别（保持 id 和 code 一致）
+        const selectedVolumeId = targetVolume?.id
+        const selectedVolumeCode = targetVolume?.volumeCode || targetVolume?.volume_code || ''
+        if (selectedVolumeId) {
+          localStorage.setItem('currentVolumeId', String(selectedVolumeId))
+        }
+        localStorage.setItem('currentVolumeCode', selectedVolumeCode)
+        console.log('✓ 当前卷别已保存到 localStorage:', { volumeId: selectedVolumeId, volumeCode: selectedVolumeCode })
 
         console.log('📋 [loadPaperData] 排序后的卷别列表:', sortedVolumes.map(v => ({
           volumeOrder: v.volumeOrder,
@@ -457,8 +486,8 @@ export default {
         // 使用"时长+3秒"算法：在音频开始播放时设置定时器
         // 定时器时间 = 音频时长（秒）* 1000 + 3000（3秒）
         if (audioDuration > 0) {
-          const totalWaitTime = (audioDuration * 1000) + 3000
-          console.log(`设置定时器: 音频时长(${audioDuration}秒) + 3秒 = ${totalWaitTime}毫秒`)
+          const totalWaitTime = (audioDuration * 1000) + 500
+          console.log(`设置定时器: 音频时长(${audioDuration}秒) + 0.5秒 = ${totalWaitTime}毫秒`)
           this.audioPlayTimer = setTimeout(() => {
             console.log('✓ 定时器触发：音频应该已播放完成并等待3秒，开始跳转')
             this.handleAudioComplete()
@@ -561,9 +590,9 @@ export default {
       // 音频播放完成后停留3秒，然后跳转到大题列表页面
       console.log('✓ 卷别音频播放完成，等待3秒后跳转到大题列表页面')
       this.audioPlayTimer = setTimeout(() => {
-        console.log('✓ 3秒等待完成，跳转到大题列表页面')
+        console.log('✓ 0.5秒等待完成，跳转到大题列表页面')
         this.navigateToSectionList()
-      }, 3000)
+      }, 500)
     },
     
     handleAudioComplete() {
@@ -808,7 +837,7 @@ export default {
   background: #fff;
   display: flex;
   position: relative;
-  padding-bottom: 60px; /* 为底部频率条留出空间 */
+  padding-bottom: 30px; /* 为底部频率条留出空间 */
 }
 
 .main-content {
@@ -942,7 +971,7 @@ export default {
   left: 0;
   right: 0;
   width: 100%;
-  height: 60px;
+  height: 30px;
   background-color: #409EFF; /* 蓝色背景 */
   z-index: 1000;
 }
@@ -953,7 +982,5 @@ export default {
   display: block;
 }
 </style>
-
-
 
 

@@ -444,23 +444,28 @@ function logToMain(level, ...args) {
 }
 
 // 重写 console.log, console.warn, console.error 以同时输出到主进程
-const originalLog = console.log
-const originalWarn = console.warn
-const originalError = console.error
+// 使用全局标记防止多次重写（导致日志重复输出）
+if (!window.__consoleLogOverridden) {
+  window.__consoleLogOverridden = true
+  
+  const originalLog = console.log
+  const originalWarn = console.warn
+  const originalError = console.error
 
-console.log = function(...args) {
-  originalLog.apply(console, args)
-  logToMain('info', ...args)
-}
+  console.log = function(...args) {
+    originalLog.apply(console, args)
+    logToMain('info', ...args)
+  }
 
-console.warn = function(...args) {
-  originalWarn.apply(console, args)
-  logToMain('warn', ...args)
-}
+  console.warn = function(...args) {
+    originalWarn.apply(console, args)
+    logToMain('warn', ...args)
+  }
 
-console.error = function(...args) {
-  originalError.apply(console, args)
-  logToMain('error', ...args)
+  console.error = function(...args) {
+    originalError.apply(console, args)
+    logToMain('error', ...args)
+  }
 }
 
 export default {
@@ -1422,7 +1427,9 @@ export default {
           userAnswer: answer.userAnswer,
           result: result,
           questionSort: this.currentQuestionIndex + 1,
-          timeSpent: timeSpent
+          timeSpent: timeSpent,
+          sectionId: this.currentQuestion.section_id || this.currentQuestion.sectionId || null,
+          volumeCode: this.currentVolumeCode || null
         })
       } catch (error) {
         console.error('保存答案失败:', error)

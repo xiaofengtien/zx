@@ -10,7 +10,7 @@
       </div>
       
       <el-tabs v-model="activeTab" @tab-click="handleTabClick">
-        <el-tab-pane v-if="isOnline" label="在线登录" name="online">
+        <el-tab-pane v-if="isOnline && isBackendAvailable" label="在线登录" name="online">
           <el-form ref="onlineForm" :model="onlineForm" :rules="onlineRules" label-width="100px">
             <el-form-item label="学员账号" prop="username">
               <el-input v-model="onlineForm.username" placeholder="请输入学员账号" />
@@ -34,7 +34,7 @@
           </el-form>
         </el-tab-pane>
         
-        <el-tab-pane v-if="!isOnline" label="离线登录" name="offline">
+        <el-tab-pane v-if="!isOnline || !isBackendAvailable" label="离线登录" name="offline">
           <el-form ref="offlineForm" :model="offlineForm" :rules="offlineRules" label-width="100px">
             <el-form-item label="学员账号" prop="username">
               <el-input v-model="offlineForm.username" placeholder="请输入学员账号" />
@@ -225,10 +225,21 @@ export default {
       // Logo图片 - file-loader返回字符串路径
       logoImage: require('@/assets/images/logo.png'),
       // 页面初始化状态
-      pageReady: false
+      pageReady: false,
+      // API 基础地址
+      apiBaseUrl: 'http://localhost:8080'
     }
   },
   async mounted() {
+    // 获取 API 基础地址
+    try {
+      this.apiBaseUrl = await ipcRenderer.invoke('app:getApiBaseUrl')
+      console.log('API地址:', this.apiBaseUrl)
+    } catch (error) {
+      console.error('获取API地址失败，使用默认值:', error)
+      this.apiBaseUrl = 'http://localhost:8080'
+    }
+    
     // 获取网络状态
     try {
       const networkStatus = await ipcRenderer.invoke('app:getNetworkStatus')
@@ -272,10 +283,9 @@ export default {
      */
     async checkBackendService() {
       try {
-        const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
         // 使用一个简单的健康检查接口，或者尝试获取验证码接口
         // 这里使用一个轻量级的请求来检查服务是否可用
-        const response = await axios.get(`${API_BASE_URL}/captchaImage`, {
+        const response = await axios.get(`${this.apiBaseUrl}/captchaImage`, {
           headers: {
             isToken: false
           },
@@ -314,11 +324,8 @@ export default {
       }
       
       try {
-        // Electron 应用直接连接后端，不需要 /dev-api 前缀（该前缀仅用于前端代理）
-        const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
-        
         // 调用 API 获取验证码（返回 JSON，包含 base64 图片）
-        const response = await axios.get(`${API_BASE_URL}/captchaImage`, {
+        const response = await axios.get(`${this.apiBaseUrl}/captchaImage`, {
           headers: {
             isToken: false
           }
@@ -483,8 +490,7 @@ export default {
         
         this.forgotPasswordLoading = true
         try {
-          const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
-          const response = await axios.post(`${API_BASE_URL}/student/archive/forgotPassword`, {
+          const response = await axios.post(`${this.apiBaseUrl}/student/archive/forgotPassword`, {
             studentAccount: this.forgotPasswordForm.studentAccount,
             phoneNumber: this.forgotPasswordForm.phoneNumber,
             newPassword: this.forgotPasswordForm.newPassword
@@ -514,7 +520,6 @@ export default {
         
         this.changePasswordLoading = true
         try {
-          const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
           const token = localStorage.getItem('token')
           
           if (!token) {
@@ -524,7 +529,7 @@ export default {
           }
           
           // 调用修改密码接口
-          const response = await axios.post(`${API_BASE_URL}/student/archive/changePwd`, {
+          const response = await axios.post(`${this.apiBaseUrl}/student/archive/changePwd`, {
             archiveId: this.currentUserInfo.archiveId,
             oldPassword: this.changePasswordForm.oldPassword,
             newPassword: this.changePasswordForm.newPassword

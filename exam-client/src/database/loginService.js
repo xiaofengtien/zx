@@ -1,9 +1,11 @@
 const axios = require('axios')
 const crypto = require('crypto')
 
+const { app } = require('electron')
+
 // 后端API地址（需要根据实际情况配置）
 // 注意：Electron 应用直接连接后端，不需要 /dev-api 前缀（该前缀仅用于前端 Vue 应用的代理）
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
+const API_BASE_URL = app.isPackaged ? 'http://47.94.192.7:8818/prod-api' : (process.env.API_BASE_URL || 'http://localhost:8080')
 
 class LoginService {
   constructor(db) {
@@ -17,7 +19,7 @@ class LoginService {
     try {
       console.log('开始在线登录，参数:', { username, code, uuid: uuid ? '已提供' : '未提供' })
       console.log('API地址:', `${API_BASE_URL}/student/onlineLogin`)
-      
+
       // 调用后端在线登录接口
       const response = await axios.post(`${API_BASE_URL}/student/onlineLogin`, {
         username,
@@ -34,27 +36,27 @@ class LoginService {
 
       if (response.data && response.data.code === 200 && response.data.token) {
         const token = response.data.token
-        console.log('登录成功，获取到token，开始获取学员信息')
-        
+        console.log('[Auth] ✓ 登录成功，获取到token，开始获取学员信息')
+
         // 获取学员信息（只获取基本信息，不保存数据）
         const userInfo = await this.getStudentInfo(token)
-        
+
         if (userInfo) {
           console.log('=== 获取到学员信息 ===')
           console.log('userInfo 对象:', JSON.stringify(userInfo, null, 2))
-          
+
           // 保存学员账号到 userInfo（用于后续查询）
           if (!userInfo.studentAccount && userInfo.user?.userName) {
             userInfo.studentAccount = userInfo.user.userName
             console.log('设置 studentAccount:', userInfo.studentAccount)
           }
-          
+
           // 如果 getInfo 接口返回了 archiveId 和 applicablePapers，优先保存到本地数据库
           if (userInfo.archiveId && userInfo.applicablePapers) {
             console.log('getInfo 接口返回了学员档案信息，优先保存到本地数据库')
             console.log('archiveId:', userInfo.archiveId)
             console.log('applicablePapers:', userInfo.applicablePapers)
-            
+
             try {
               await this.saveCurrentStudentArchive(userInfo)
               console.log('✓ 当前学员档案已保存到本地数据库')
@@ -63,10 +65,10 @@ class LoginService {
               // 不抛出异常，登录仍然成功
             }
           }
-          
+
           // 保存 token 到 userInfo
           userInfo.token = token
-          
+
           // 关键：每次在线登录成功后，更新本地保存的凭证（包括密码hash）
           // 这样可以防止密码被修改后，离线登录时使用旧密码hash导致失败
           try {
@@ -78,7 +80,7 @@ class LoginService {
             // 不抛出异常，登录仍然成功，但离线登录可能会失败
             console.warn('⚠️ 警告：本地凭证更新失败，离线登录可能会失败')
           }
-          
+
           return {
             success: true,
             token,
@@ -92,8 +94,8 @@ class LoginService {
           }
         }
       }
-      
-      console.error('登录失败，响应数据:', response.data)
+
+      console.error('[Auth] ✗ 登录失败，响应数据:', response.data)
       return {
         success: false,
         message: response.data?.msg || '登录失败'
@@ -202,7 +204,7 @@ class LoginService {
       console.log('response.data 是否为 undefined:', response.data === undefined)
       console.log('response.data 的所有键:', Object.keys(response.data || {}))
       console.log('响应数据结构（完整）:', JSON.stringify(response.data, null, 2))
-      
+
       // 直接检查 applicablePapers
       console.log('直接检查 response.data.applicablePapers:', response.data?.applicablePapers)
       console.log('直接检查 response.data.archiveId:', response.data?.archiveId)
@@ -210,7 +212,7 @@ class LoginService {
       if (response.data && response.data.code === 200) {
         // 先创建一个基础对象
         let userInfo = {}
-        
+
         // 如果响应中有 data 字段，使用它；否则从根级别获取
         if (response.data.data) {
           userInfo = response.data.data
@@ -223,21 +225,21 @@ class LoginService {
           }
           console.log('从根级别构建 userInfo')
         }
-        
+
         console.log('解析后的用户信息:', userInfo)
         console.log('响应中的 archiveId (根级别):', response.data.archiveId)
         console.log('响应中的 applicablePapers (根级别):', response.data.applicablePapers)
         console.log('响应中的 needForceChangePassword (根级别):', response.data.needForceChangePassword)
         console.log('响应中的 applicablePapers 类型:', typeof response.data.applicablePapers)
         console.log('响应中的 applicablePapers 是否为数组:', Array.isArray(response.data.applicablePapers))
-        
+
         // 从响应中直接获取学员档案信息（后端 getInfo 接口已经返回了）
         // 注意：archiveId、applicablePapers 和 needForceChangePassword 在 response.data 的根级别，不在 data 字段中
         if (response.data.archiveId) {
           userInfo.archiveId = response.data.archiveId
           console.log('设置 archiveId:', userInfo.archiveId)
         }
-        
+
         // 获取学员档案对象（包含 studentName 等字段）
         if (response.data.archive) {
           userInfo.archive = response.data.archive
@@ -245,13 +247,13 @@ class LoginService {
           userInfo.seatNumber = response.data.archive.seatNumber || response.data.archive.seat_number
           console.log('设置 archive:', { studentName: userInfo.studentName, seatNumber: userInfo.seatNumber })
         }
-        
+
         // 获取是否需要强制修改密码标识
         if (response.data.needForceChangePassword !== undefined) {
           userInfo.needForceChangePassword = response.data.needForceChangePassword
           console.log('设置 needForceChangePassword:', userInfo.needForceChangePassword)
         }
-        
+
         // 关键：applicablePapers 在 response.data 的根级别
         const rawApplicablePapers = response.data.applicablePapers
         console.log('=== 解析 applicablePapers ===')
@@ -260,7 +262,7 @@ class LoginService {
         console.log('是否为 undefined:', rawApplicablePapers === undefined)
         console.log('是否为 null:', rawApplicablePapers === null)
         console.log('是否为数组:', Array.isArray(rawApplicablePapers))
-        
+
         if (rawApplicablePapers !== undefined && rawApplicablePapers !== null) {
           console.log('找到 applicablePapers，开始处理')
           // 确保是数组
@@ -283,33 +285,33 @@ class LoginService {
           console.error('检查 response.data 的完整内容:', JSON.stringify(response.data, null, 2))
           userInfo.applicablePapers = []
         }
-        
+
         console.log('最终 userInfo.applicablePapers:', userInfo.applicablePapers)
         console.log('最终 userInfo.applicablePapers 长度:', userInfo.applicablePapers ? userInfo.applicablePapers.length : 0)
         console.log('最终 userInfo 对象:', JSON.stringify(userInfo, null, 2))
-        
+
         // 如果 getInfo 接口没有返回档案信息，尝试通过其他方式获取
         if (!userInfo.applicablePapers || userInfo.applicablePapers.length === 0) {
           console.log('getInfo 接口未返回档案信息，尝试通过其他方式获取')
           const studentAccount = userInfo.user?.userName
           const userId = userInfo.user?.userId
-          
+
           let archiveInfo = null
-          
+
           // 方法1: 尝试通过 userId 查询（userId 可能就是 archiveId）
           if (userId) {
             console.log('尝试通过 userId 查询档案:', userId)
             archiveInfo = await this.getStudentArchiveById(userId, token)
           }
-          
+
           // 方法2: 如果通过 userId 没找到，尝试从本地数据库获取 archiveId
           if (!archiveInfo && studentAccount) {
             archiveInfo = await this.getStudentArchive(studentAccount, token)
           }
-          
-        if (archiveInfo) {
-          userInfo.applicablePapers = archiveInfo.applicablePapers || []
-          userInfo.archiveId = archiveInfo.id
+
+          if (archiveInfo) {
+            userInfo.applicablePapers = archiveInfo.applicablePapers || []
+            userInfo.archiveId = archiveInfo.id
             console.log('通过其他方式获取到学员档案信息:', {
               archiveId: archiveInfo.id,
               applicablePapers: archiveInfo.applicablePapers
@@ -318,7 +320,7 @@ class LoginService {
             console.warn('未能获取学员档案信息，studentAccount:', studentAccount, 'userId:', userId)
           }
         }
-        
+
         return userInfo
       }
       console.error('获取学员信息失败，响应code不是200:', response.data)
@@ -343,9 +345,9 @@ class LoginService {
       if (!studentAccount) {
         return null
       }
-      
+
       console.log('尝试通过学员账号查询档案:', studentAccount)
-      
+
       // 后端没有直接通过账号查询的接口，所以先尝试查询列表然后过滤
       // 或者可以尝试通过 userId 查询（如果 userId 就是 archiveId）
       // 这里先返回 null，让调用方尝试其他方法
@@ -364,9 +366,9 @@ class LoginService {
       if (!archiveId) {
         return null
       }
-      
+
       console.log('通过 archiveId 获取学员档案:', archiveId)
-      
+
       const archiveResponse = await axios.post(`${API_BASE_URL}/student/archive/getArchive`, {
         archiveId: archiveId
       }, {
@@ -374,9 +376,9 @@ class LoginService {
           'Authorization': `Bearer ${token}`
         }
       })
-      
+
       console.log('档案查询响应:', archiveResponse.data)
-      
+
       if (archiveResponse.data && archiveResponse.data.code === 200 && archiveResponse.data.data) {
         const archive = archiveResponse.data.data
         console.log('获取到学员档案:', {
@@ -386,7 +388,7 @@ class LoginService {
         })
         return archive
       }
-      
+
       return null
     } catch (error) {
       console.error('通过 archiveId 获取学员档案失败:', error)
@@ -409,20 +411,20 @@ class LoginService {
         console.warn('学员账号为空，无法获取档案信息')
         return null
       }
-      
+
       console.log('开始获取学员档案，学员账号:', studentAccount)
-      
+
       // 从本地数据库查询之前保存的 archiveId
       const credential = this.db.prepare(`
         SELECT archive_id FROM student_credentials 
         WHERE student_account = ?
       `).get(studentAccount)
-      
+
       if (credential && credential.archive_id) {
         console.log('从本地数据库获取到 archiveId:', credential.archive_id)
         return await this.getStudentArchiveById(credential.archive_id, token)
       }
-      
+
       console.warn('本地数据库中没有找到 archiveId，无法获取学员档案')
       return null
     } catch (error) {
@@ -484,18 +486,18 @@ class LoginService {
    */
   async saveStudentPapers(username, userInfo) {
     console.log('=== 开始保存学员试卷类型 ===')
-    console.log('学员账号:', username)
+    console.log('[Auth] 学员账号:', username)
     console.log('userInfo 对象:', userInfo)
     console.log('userInfo.applicablePapers:', userInfo.applicablePapers)
     console.log('userInfo.applicablePapers 类型:', typeof userInfo.applicablePapers)
     console.log('userInfo.applicablePapers 是否为数组:', Array.isArray(userInfo.applicablePapers))
-    
+
     // 从用户信息中获取适用考卷类型（dictValue 列表）
     let paperTypes = userInfo.applicablePapers || []
-    
+
     console.log('从用户信息获取的适用试卷类型:', paperTypes)
     console.log('试卷类型数量:', paperTypes.length)
-    
+
     // 如果用户信息中没有，尝试从后端获取学员档案
     if (paperTypes.length === 0 && userInfo.archiveId) {
       try {
@@ -507,9 +509,9 @@ class LoginService {
             'Authorization': `Bearer ${userInfo.token || ''}`
           }
         })
-        
-        console.log('学员档案响应:', archiveResponse.data)
-        
+
+        console.log('[Auth] 学员档案响应:', archiveResponse.data)
+
         if (archiveResponse.data && archiveResponse.data.code === 200 && archiveResponse.data.data) {
           const archive = archiveResponse.data.data
           paperTypes = archive.applicablePapers || []
@@ -524,7 +526,7 @@ class LoginService {
         })
       }
     }
-    
+
     // 确保 paperTypes 是数组
     if (!Array.isArray(paperTypes)) {
       console.warn('paperTypes 不是数组，转换为数组:', paperTypes)
@@ -535,15 +537,15 @@ class LoginService {
         paperTypes = []
       }
     }
-    
+
     console.log('最终保存的试卷类型:', paperTypes)
     console.log('试卷类型数量:', paperTypes.length)
     console.log('试卷类型 JSON:', JSON.stringify(paperTypes))
-    
+
     // 保存到本地数据库
     const paperTypesJson = JSON.stringify(paperTypes)
     const now = Date.now()
-    
+
     console.log('准备保存到数据库，JSON 字符串:', paperTypesJson)
     console.log('当前时间戳:', now)
 
@@ -554,28 +556,28 @@ class LoginService {
       (student_account, paper_types, update_time)
       VALUES (?, ?, ?)
       `)
-      
+
       console.log('执行 SQL 插入/更新操作...')
       const result = stmt.run(username, paperTypesJson, now)
       console.log('SQL 执行结果:', result)
       console.log('影响的行数:', result.changes)
       console.log('最后插入的 ID:', result.lastInsertRowid)
-      
+
       console.log('试卷类型已保存到本地数据库，学员账号:', username)
-      
+
       // 验证保存是否成功
       const verifyResult = this.db.prepare(`
         SELECT paper_types FROM student_papers 
         WHERE student_account = ?
       `).get(username)
-      
+
       console.log('验证查询结果:', verifyResult)
-      
+
       if (verifyResult && verifyResult.paper_types) {
         const savedTypes = JSON.parse(verifyResult.paper_types)
         console.log('验证保存结果，保存的试卷类型:', savedTypes)
         console.log('保存的试卷类型数量:', savedTypes.length)
-        
+
         if (savedTypes.length === 0 && paperTypes.length > 0) {
           console.error('警告：保存的试卷类型为空，但原始数据不为空！')
           console.error('原始数据:', paperTypes)
@@ -604,12 +606,12 @@ class LoginService {
       const userId = userInfo.user?.userId
       const studentAccount = userInfo.studentAccount || userInfo.user?.userName
       const applicablePapers = userInfo.applicablePapers || []
-      
+
       if (!archiveId || !studentAccount) {
         console.warn('缺少必要信息，无法保存学员档案:', { archiveId, studentAccount })
         return
       }
-      
+
       // 确保 applicablePapers 是数组
       let applicablePapersJson = '[]'
       if (Array.isArray(applicablePapers)) {
@@ -623,14 +625,14 @@ class LoginService {
           applicablePapersJson = JSON.stringify(arr)
         }
       }
-      
+
       console.log('保存当前学员档案到本地数据库:', {
         id: archiveId,
         user_id: userId,
         student_account: studentAccount,
         applicable_papers: applicablePapersJson
       })
-      
+
       // 从后端获取完整的学员档案信息（包含座位号等字段）
       let fullArchive = null
       if (archiveId && userInfo.token) {
@@ -641,28 +643,28 @@ class LoginService {
           console.warn('获取完整学员档案失败（不影响保存）:', error)
         }
       }
-      
+
       // 插入或更新学员档案（使用 INSERT OR REPLACE，包含座位号和学员姓名字段）
       const stmt = this.db.prepare(`
         INSERT OR REPLACE INTO student_archive 
         (id, user_id, student_account, student_name, applicable_papers, seat_number, status, del_flag, update_time)
         VALUES (?, ?, ?, ?, ?, ?, '0', '0', ?)
       `)
-      
+
       // 从完整档案或userInfo中获取座位号和学员姓名
       const seatNumber = fullArchive?.seatNumber || fullArchive?.seat_number || userInfo.seatNumber || userInfo.seat_number || null
-      const studentName = fullArchive?.studentName || fullArchive?.student_name || fullArchive?.name || 
-                          userInfo.studentName || userInfo.student_name || userInfo.archive?.studentName || 
-                          userInfo.archive?.student_name || userInfo.user?.nickName || userInfo.nickName || null
-      
-      console.log('学员姓名来源:', { 
+      const studentName = fullArchive?.studentName || fullArchive?.student_name || fullArchive?.name ||
+        userInfo.studentName || userInfo.student_name || userInfo.archive?.studentName ||
+        userInfo.archive?.student_name || userInfo.user?.nickName || userInfo.nickName || null
+
+      console.log('[Auth] 学员姓名来源:', {
         fullArchive: fullArchive?.studentName,
         userInfo: userInfo.studentName,
         archive: userInfo.archive?.studentName,
         nickName: userInfo.user?.nickName,
-        final: studentName 
+        final: studentName
       })
-      
+
       stmt.run(
         archiveId,
         userId || null,
@@ -672,7 +674,7 @@ class LoginService {
         seatNumber,
         Date.now()
       )
-      
+
       console.log('✓ 当前学员档案已保存:', { archiveId, studentName, seatNumber })
     } catch (error) {
       console.error('保存当前学员档案失败:', error)
@@ -685,7 +687,7 @@ class LoginService {
    */
   getStudentPapers(studentAccount) {
     console.log('查询学员试卷类型，学员账号:', studentAccount)
-    
+
     // 先查询所有数据，用于调试
     const allData = this.db.prepare(`
       SELECT id, user_id, student_account, applicable_papers 
@@ -698,7 +700,7 @@ class LoginService {
       student_account: r.student_account,
       applicable_papers: r.applicable_papers
     })))
-    
+
     // 从学员档案表获取（applicable_papers 字段）
     const result = this.db.prepare(`
       SELECT applicable_papers FROM student_archive 
@@ -730,18 +732,18 @@ class LoginService {
     console.warn('未找到学员的试卷类型数据，学员账号:', studentAccount)
     return []
   }
-  
+
   /**
    * 根据 user_id 获取学员适用试卷类型（从本地数据库的学员档案表获取）
    */
   getStudentPapersByUserId(userId) {
     console.log('查询学员试卷类型，user_id:', userId)
     console.log('user_id 类型:', typeof userId)
-    
+
     // 确保 user_id 是数字类型（SQLite INTEGER）
     const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId
     console.log('转换后的 user_id:', userIdNum, '类型:', typeof userIdNum)
-    
+
     // 先查询所有数据，用于调试
     const allData = this.db.prepare(`
       SELECT id, user_id, student_account, applicable_papers 
@@ -755,7 +757,7 @@ class LoginService {
       student_account: r.student_account,
       applicable_papers: r.applicable_papers
     })))
-    
+
     // 从学员档案表获取（applicable_papers 字段）
     // 尝试两种查询方式：精确匹配和类型转换匹配
     let result = this.db.prepare(`
@@ -763,7 +765,7 @@ class LoginService {
       WHERE user_id = ? AND del_flag = '0' AND status = '0'
       LIMIT 1
     `).get(userIdNum)
-    
+
     // 如果没找到，尝试用原始值查询
     if (!result) {
       console.log('使用数字类型查询失败，尝试使用原始值查询')
@@ -805,7 +807,7 @@ class LoginService {
   async saveDictData(token) {
     try {
       console.log('开始获取字典数据')
-      
+
       // 获取 paper_type 字典数据
       const response = await axios.get(`${API_BASE_URL}/system/dict/data/type/paper_type`, {
         headers: {

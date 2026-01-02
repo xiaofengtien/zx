@@ -3,6 +3,7 @@ import Vue from 'vue'
 import Cookies from 'js-cookie'
 
 import Element from 'element-ui'
+import locale from 'element-ui/lib/locale/lang/zh-CN'
 import './assets/styles/element-variables.scss'
 
 import '@/assets/styles/index.scss' // global css
@@ -70,10 +71,125 @@ DictData.install()
  */
 
 Vue.use(Element, {
-  size: Cookies.get('size') || 'medium' // set element-ui default size
+  size: Cookies.get('size') || 'medium', // set element-ui default size
+  locale: locale // 使用中文语言包
 })
 
 Vue.config.productionTip = false
+
+// 静默过滤 Chrome 扩展相关错误（仅过滤控制台输出，不影响功能）
+if (typeof window !== 'undefined') {
+  const shouldFilter = (msg) => {
+    if (!msg) return false
+    const str = String(msg)
+    return str.includes('chrome-extension://') ||
+           str.includes('moz-extension://') ||
+           str.includes('safari-extension://') ||
+           str.includes('edge-extension://') ||
+           str.includes('pejdijmoenmkgeppbflobdenhhabjlaj') ||
+           str.includes('completion_list') ||
+           (str.includes('ERR_FILE_NOT_FOUND') && str.includes('extension'))
+  }
+  
+  // 过滤 console 输出
+  if (window.console) {
+    const originalError = console.error
+    const originalWarn = console.warn
+    
+    console.error = function(...args) {
+      const msg = args.join(' ')
+      if (!shouldFilter(msg)) {
+        originalError.apply(console, args)
+      }
+    }
+    
+    console.warn = function(...args) {
+      const msg = args.join(' ')
+      if (!shouldFilter(msg)) {
+        originalWarn.apply(console, args)
+      }
+    }
+  }
+  
+  // 过滤 window.onerror
+  const originalOnError = window.onerror
+  window.onerror = function(message, source, lineno, colno, error) {
+    const errorString = String(message || '') + String(source || '')
+    if (shouldFilter(errorString)) {
+      return true // 返回 true 表示已处理，不显示错误
+    }
+    if (originalOnError && typeof originalOnError === 'function') {
+      return originalOnError.apply(window, arguments)
+    }
+    return false
+  }
+  
+  // 过滤 error 事件（包括资源加载错误）
+  window.addEventListener('error', function(event) {
+    const msg = String(event.message || '')
+    const src = String(event.filename || event.target?.src || event.target?.href || '')
+    if (shouldFilter(msg + src)) {
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      return false
+    }
+  }, true)
+  
+  // 拦截 fetch 请求中的扩展错误
+  if (window.fetch) {
+    const originalFetch = window.fetch
+    window.fetch = function(...args) {
+      const url = args[0]
+      if (typeof url === 'string' && shouldFilter(url)) {
+        return Promise.resolve(new Response(null, { status: 404 }))
+      }
+      if (url && typeof url === 'object' && url.url && shouldFilter(url.url)) {
+        return Promise.resolve(new Response(null, { status: 404 }))
+      }
+      return originalFetch.apply(window, args).catch(error => {
+        if (shouldFilter(error.message || error.toString())) {
+          return new Response(null, { status: 404 })
+        }
+        throw error
+      })
+    }
+  }
+  
+  // 拦截 XMLHttpRequest 中的扩展错误
+  if (window.XMLHttpRequest) {
+    const OriginalXHR = window.XMLHttpRequest
+    window.XMLHttpRequest = function() {
+      const xhr = new OriginalXHR()
+      const originalOpen = xhr.open
+      xhr.open = function(method, url, ...rest) {
+        if (shouldFilter(url)) {
+          xhr._blocked = true
+          return
+        }
+        return originalOpen.apply(xhr, [method, url, ...rest])
+      }
+      const originalSend = xhr.send
+      xhr.send = function(...args) {
+        if (xhr._blocked) {
+          return
+        }
+        const originalOnError = xhr.onerror
+        xhr.onerror = function(event) {
+          const url = xhr.responseURL || ''
+          if (shouldFilter(url)) {
+            return
+          }
+          if (originalOnError) {
+            return originalOnError.call(xhr, event)
+          }
+        }
+        return originalSend.apply(xhr, args)
+      }
+      return xhr
+    }
+  }
+}
 
 new Vue({
   el: '#app',

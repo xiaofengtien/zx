@@ -115,4 +115,28 @@ public class QuestionInfoDTO implements Serializable {
      * 缩略图URL
      */
     private String thumbnailUrl;
-} 
+
+    // ========== 填空题字段 ==========
+
+    /**
+     * 填空题答案列表（从answer字段解析）
+     */
+    private List<String> blankAnswers;
+
+    // ========== 作文题字段 ==========
+
+    /**
+     * 词数限制（0表示不限制）
+     */
+    private Integer wordLimit;
+
+    /**
+     * 写作要求列表
+     */
+    private List<String> requirements;
+
+    /**
+     * 参考范文
+     */
+    private String sampleAnswer;
+}

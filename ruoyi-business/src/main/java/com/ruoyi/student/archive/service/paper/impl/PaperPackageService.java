@@ -6,13 +6,16 @@ import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.common.utils.oss.exam.question.OssUtil;
 import com.ruoyi.student.archive.biz.question.IQuestionMediaBiz;
+import com.ruoyi.student.archive.domain.paper.PaperVolume;
 import com.ruoyi.student.archive.domain.question.QuestionMedia;
 import com.ruoyi.student.archive.domain.paper.Paper;
 import com.ruoyi.student.archive.domain.paper.PaperIntermission;
 import com.ruoyi.student.archive.domain.paper.PaperQuestion;
 import com.ruoyi.student.archive.domain.paper.PaperSection;
 import com.ruoyi.student.archive.domain.paper.PaperVolume;
+import com.ruoyi.student.archive.domain.paper.PaperQuestionGroup;
 import com.ruoyi.student.archive.service.paper.IPaperIntermissionService;
+import com.ruoyi.student.archive.service.paper.IPaperQuestionGroupService;
 import com.ruoyi.student.archive.service.paper.IPaperSectionService;
 import com.ruoyi.student.archive.service.paper.IPaperVolumeService;
 import com.ruoyi.student.archive.service.question.QuestionService;
@@ -46,6 +49,7 @@ public class PaperPackageService {
     private final IPaperVolumeService paperVolumeService;
     private final IPaperSectionService paperSectionService;
     private final IPaperIntermissionService paperIntermissionService;
+    private final IPaperQuestionGroupService paperQuestionGroupService;
     private final com.ruoyi.student.archive.biz.paper.IPaperQuestionBiz paperQuestionBiz;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -75,7 +79,11 @@ public class PaperPackageService {
             List<PaperIntermission> intermissions = paperIntermissionService.listByPaperId(paper.getId());
 
             // 4. 获取题目关联列表（仅用于构建manifest，不需要实际题目数据）
+            // 4. 获取题目关联列表（仅用于构建manifest，不需要实际题目数据）
             List<PaperQuestion> paperQuestions = paperQuestionBiz.listByPaperId(paper.getId());
+
+            // 4.5 获取题目组列表
+            List<PaperQuestionGroup> questionGroups = paperQuestionGroupService.listByPaperId(paper.getId());
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ZipOutputStream zos = null;
@@ -83,16 +91,20 @@ public class PaperPackageService {
                 zos = new ZipOutputStream(baos, StandardCharsets.UTF_8);
 
                 // 5. 生成 manifest.json（试卷元数据）
-                Map<String, Object> manifest = buildManifest(paper, volumes, sections, intermissions, paperQuestions);
+                Map<String, Object> manifest = buildManifest(paper, volumes, sections, intermissions, paperQuestions,
+                        questionGroups);
                 addJsonToZip(zos, "manifest.json", manifest);
 
                 // 6. 打包快速启动所需的媒体文件
+                // 用于跟踪已添加到ZIP的文件路径，避免重复
+                Set<String> addedPaths = new HashSet<>();
+
                 // 6.1 试听媒体（trial_listen/）
                 List<QuestionMedia> trialMedia = questionMediaBiz.list(
                         new LambdaQueryWrapper<QuestionMedia>()
                                 .eq(QuestionMedia::getPaperId, paper.getId())
                                 .in(QuestionMedia::getMediaType, Arrays.asList(10, 11)));
-                packMediaFiles(zos, trialMedia, "trial_listen/");
+                packMediaFiles(zos, trialMedia, "trial_listen/", addedPaths);
 
                 // 6.2 试听音频（从 Paper 实体字段获取）
                 // 试听旁白音频（介绍音频，自动播放）- 独立判断，不依赖trialListenEnabled
@@ -101,7 +113,7 @@ public class PaperPackageService {
                     packMediaFileFromEntity(zos, paper.getTrialIntroAudioUrl(), paper.getTrialIntroAudioPath(),
                             "trial_intro/");
                 }
-                
+
                 // 试听相关音频和图片（仅在trialListenEnabled为1时打包）
                 if (paper.getTrialListenEnabled() != null && paper.getTrialListenEnabled() == 1) {
                     // 试听音频（用户点击播放）
@@ -111,10 +123,10 @@ public class PaperPackageService {
                                 "trial_listen/");
                     }
                     // 操作提示图片
-                    if (StringUtils.isNotEmpty(paper.getOperateListenImageUrl())
-                            || StringUtils.isNotEmpty(paper.getOperateListenImagePath())) {
-                        packMediaFileFromEntity(zos, paper.getOperateListenImageUrl(), paper.getOperateListenImagePath(),
-                                "operate_listen/");
+                    String operateImg = paper.getOperateListenImageUrl();
+                    String operatePath = paper.getOperateListenImagePath();
+                    if (StringUtils.isNotEmpty(operateImg) || StringUtils.isNotEmpty(operatePath)) {
+                        packMediaFileFromEntity(zos, operateImg, operatePath, "operate_listen/");
                     }
                 }
 
@@ -154,7 +166,7 @@ public class PaperPackageService {
                 throw new ServiceException("生成的快速启动包格式不正确");
             }
 
-            log.info("快速启动包生成成功，试卷ID：{}，包大小：{} 字节（{} MB）", 
+            log.info("快速启动包生成成功，试卷ID：{}，包大小：{} 字节（{} MB）",
                     paper.getId(), zipBytes.length, zipBytes.length / 1024.0 / 1024.0);
             return zipBytes;
 
@@ -187,6 +199,12 @@ public class PaperPackageService {
 
         log.info("开始生成试卷包，试卷ID：{}，题目数量：{}", paper.getId(), paperQuestions.size());
 
+        // 调试：打印所有题目的sectionId
+        for (PaperQuestion pq : paperQuestions) {
+            log.info("题目关联: questionId={}, sectionId={}, sectionOrder={}",
+                    pq.getQuestionId(), pq.getSectionId(), pq.getSectionOrder());
+        }
+
         try {
             // 1. 获取卷别列表
             List<PaperVolume> volumes = paperVolumeService.listByPaperId(paper.getId());
@@ -202,14 +220,19 @@ public class PaperPackageService {
                     .map(PaperQuestion::getQuestionId)
                     .collect(Collectors.toList());
 
+            // 4.5 获取题目组列表
+            List<PaperQuestionGroup> questionGroups = paperQuestionGroupService.listByPaperId(paper.getId());
+
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ZipOutputStream zos = null;
             try {
                 zos = new ZipOutputStream(baos, StandardCharsets.UTF_8);
 
                 // 5. 生成 manifest.json（试卷元数据，使用新的表结构）
+                // 5. 生成 manifest.json（试卷元数据，使用新的表结构）
                 // 注意：完整包也包含manifest.json，以便独立使用
-                Map<String, Object> manifest = buildManifest(paper, volumes, sections, intermissions, paperQuestions);
+                Map<String, Object> manifest = buildManifest(paper, volumes, sections, intermissions, paperQuestions,
+                        questionGroups);
                 addJsonToZip(zos, "manifest.json", manifest);
 
                 // 6. 生成 questions.json（题目数据，使用新的表结构）
@@ -218,7 +241,7 @@ public class PaperPackageService {
 
                 // 7. 下载并打包媒体文件（使用新的表结构和 media_type）
                 // 注意：完整包包含所有媒体文件，包括快速启动包中的文件（以便独立使用）
-                downloadAndPackMediaFiles(zos, paper, volumes, sections, intermissions, questionIds);
+                downloadAndPackMediaFiles(zos, paper, volumes, sections, intermissions, questionGroups, questionIds);
 
                 // 确保所有数据都写入并关闭ZIP流
                 zos.finish();
@@ -275,7 +298,8 @@ public class PaperPackageService {
             List<PaperVolume> volumes,
             List<PaperSection> sections,
             List<PaperIntermission> intermissions,
-            List<PaperQuestion> paperQuestions) {
+            List<PaperQuestion> paperQuestions,
+            List<PaperQuestionGroup> questionGroups) {
         Map<String, Object> manifest = new HashMap<>();
 
         // 1. 基本信息
@@ -292,12 +316,12 @@ public class PaperPackageService {
         manifest.put("province", paper.getProvince());
         manifest.put("notes", paper.getNotes());
         manifest.put("notesDisplayMode", paper.getNotesDisplayMode());
-        
+
         // 1.1 注意事项音频（使用 introAudio 字段）
         manifest.put("introAudioUrl", paper.getIntroAudioUrl());
         // 使用相对路径（从URL或Path中提取文件名）
         if (StringUtils.isNotEmpty(paper.getIntroAudioUrl()) || StringUtils.isNotEmpty(paper.getIntroAudioPath())) {
-            manifest.put("introAudioPath", 
+            manifest.put("introAudioPath",
                     "intro/" + getMediaFileName(paper.getIntroAudioUrl(), paper.getIntroAudioPath()));
         } else {
             manifest.put("introAudioPath", null);
@@ -313,9 +337,11 @@ public class PaperPackageService {
             manifest.put("trialListenEnabled", true);
             manifest.put("trialListenAudioUrl", paper.getTrialListenAudioUrl());
             // 使用相对路径（从URL或Path中提取文件名）
-            if (StringUtils.isNotEmpty(paper.getTrialListenAudioUrl()) || StringUtils.isNotEmpty(paper.getTrialListenAudioPath())) {
-                manifest.put("trialListenAudioPath", 
-                        "trial_listen/" + getMediaFileName(paper.getTrialListenAudioUrl(), paper.getTrialListenAudioPath()));
+            if (StringUtils.isNotEmpty(paper.getTrialListenAudioUrl())
+                    || StringUtils.isNotEmpty(paper.getTrialListenAudioPath())) {
+                manifest.put("trialListenAudioPath",
+                        "trial_listen/"
+                                + getMediaFileName(paper.getTrialListenAudioUrl(), paper.getTrialListenAudioPath()));
             } else {
                 manifest.put("trialListenAudioPath", null);
             }
@@ -323,9 +349,11 @@ public class PaperPackageService {
             manifest.put("trialListenAudioText", paper.getTrialListenAudioText());
             manifest.put("trialIntroAudioUrl", paper.getTrialIntroAudioUrl());
             // 使用相对路径（从URL或Path中提取文件名）
-            if (StringUtils.isNotEmpty(paper.getTrialIntroAudioUrl()) || StringUtils.isNotEmpty(paper.getTrialIntroAudioPath())) {
+            if (StringUtils.isNotEmpty(paper.getTrialIntroAudioUrl())
+                    || StringUtils.isNotEmpty(paper.getTrialIntroAudioPath())) {
                 manifest.put("trialIntroAudioPath",
-                        "trial_intro/" + getMediaFileName(paper.getTrialIntroAudioUrl(), paper.getTrialIntroAudioPath()));
+                        "trial_intro/"
+                                + getMediaFileName(paper.getTrialIntroAudioUrl(), paper.getTrialIntroAudioPath()));
             } else {
                 manifest.put("trialIntroAudioPath", null);
             }
@@ -333,9 +361,11 @@ public class PaperPackageService {
             manifest.put("operateListenText", paper.getOperateListenText());
             manifest.put("operateListenImageUrl", paper.getOperateListenImageUrl());
             // 使用相对路径（从URL或Path中提取文件名）
-            if (StringUtils.isNotEmpty(paper.getOperateListenImageUrl()) || StringUtils.isNotEmpty(paper.getOperateListenImagePath())) {
-                manifest.put("operateListenImagePath", 
-                        "operate_listen/" + getMediaFileName(paper.getOperateListenImageUrl(), paper.getOperateListenImagePath()));
+            if (StringUtils.isNotEmpty(paper.getOperateListenImageUrl())
+                    || StringUtils.isNotEmpty(paper.getOperateListenImagePath())) {
+                manifest.put("operateListenImagePath",
+                        "operate_listen/" + getMediaFileName(paper.getOperateListenImageUrl(),
+                                paper.getOperateListenImagePath()));
             } else {
                 manifest.put("operateListenImagePath", null);
             }
@@ -436,6 +466,52 @@ public class PaperPackageService {
                     .collect(Collectors.toList());
             sectionData.put("questions", questionIds);
 
+            // 处理题目组
+            List<Map<String, Object>> groupsData = new ArrayList<>();
+            if (questionGroups != null) {
+                List<PaperQuestionGroup> sectionGroups = questionGroups.stream()
+                        .filter(g -> g.getSectionId() != null && g.getSectionId().equals(section.getId()))
+                        .sorted(Comparator.comparing(PaperQuestionGroup::getGroupOrder,
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                        .collect(Collectors.toList());
+
+                for (PaperQuestionGroup group : sectionGroups) {
+                    Map<String, Object> groupData = new HashMap<>();
+                    groupData.put("id", group.getId());
+                    groupData.put("questionGroupId", group.getQuestionGroupId());
+                    groupData.put("groupName", group.getGroupName());
+                    groupData.put("introText", group.getIntroText());
+                    groupData.put("answerTime", group.getAnswerTime());
+                    groupData.put("audioUrl", group.getAudioUrl());
+                    groupData.put("audioDuration", group.getAudioDuration());
+
+                    // 解析选中的题目ID列表 (JSON字符串 "[1,2,3]")
+                    List<Integer> groupQuestionIds = new ArrayList<>();
+                    if (StringUtils.isNotEmpty(group.getSelectedQuestionIds())) {
+                        try {
+                            groupQuestionIds = objectMapper.readValue(group.getSelectedQuestionIds(),
+                                    new com.fasterxml.jackson.core.type.TypeReference<List<Integer>>() {
+                                    });
+                        } catch (Exception e) {
+                            log.warn("解析题目组 selectedQuestionIds 失败: {}, error: {}", group.getSelectedQuestionIds(),
+                                    e.getMessage());
+                        }
+                    }
+                    groupData.put("questions", groupQuestionIds);
+
+                    // 音频路径处理 (复用相对路径逻辑)
+                    if (StringUtils.isNotEmpty(group.getAudioUrl()) || StringUtils.isNotEmpty(group.getAudioPath())) {
+                        groupData.put("audioPath",
+                                "questions/groups/" + getMediaFileName(group.getAudioUrl(), group.getAudioPath()));
+                    } else {
+                        groupData.put("audioPath", null);
+                    }
+
+                    groupsData.add(groupData);
+                }
+            }
+            sectionData.put("questionGroups", groupsData);
+
             sectionsData.add(sectionData);
         }
         manifest.put("sections", sectionsData);
@@ -465,26 +541,34 @@ public class PaperPackageService {
 
     /**
      * 构建 questions.json 数据（使用新的表结构）
+     * 注意：同一道题可能出现在多个大题中，需要为每个 paper_question 记录生成一条数据
      */
     private List<Map<String, Object>> buildQuestionsData(List<Integer> questionIds,
             List<PaperQuestion> paperQuestions) throws ServiceException {
         List<Map<String, Object>> questionsData = new ArrayList<>();
 
-        // 构建题目ID到sectionId和sectionOrder的映射
-        Map<Integer, PaperQuestion> questionMap = paperQuestions.stream()
-                .collect(Collectors.toMap(PaperQuestion::getQuestionId, pq -> pq, (v1, v2) -> v1));
+        // 缓存已获取的题目详情，避免重复查询
+        Map<Integer, com.ruoyi.student.archive.domain.dto.question.QuestionInfoDTO> questionCache = new HashMap<>();
 
-        for (Integer questionId : questionIds) {
-            // 通过QuestionService获取题目详情（包含答案选项等完整信息）
-            com.ruoyi.student.archive.domain.bo.question.QuestionIdBO idBO = new com.ruoyi.student.archive.domain.bo.question.QuestionIdBO();
-            idBO.setId(questionId);
+        // 直接遍历 paperQuestions，而不是 questionIds
+        // 这样可以正确处理同一道题出现在多个大题的情况
+        for (PaperQuestion paperQuestion : paperQuestions) {
+            Integer questionId = paperQuestion.getQuestionId();
 
-            com.ruoyi.student.archive.domain.dto.question.QuestionInfoDTO questionDTO;
-            try {
-                questionDTO = questionService.getQuestion(idBO);
-            } catch (Exception e) {
-                log.warn("获取题目详情失败，跳过：questionId={}, error={}", questionId, e.getMessage());
-                continue;
+            // 从缓存获取或查询题目详情
+            com.ruoyi.student.archive.domain.dto.question.QuestionInfoDTO questionDTO = questionCache.get(questionId);
+            if (questionDTO == null) {
+                com.ruoyi.student.archive.domain.bo.question.QuestionIdBO idBO = new com.ruoyi.student.archive.domain.bo.question.QuestionIdBO();
+                idBO.setId(questionId);
+                try {
+                    questionDTO = questionService.getQuestion(idBO);
+                    if (questionDTO != null) {
+                        questionCache.put(questionId, questionDTO);
+                    }
+                } catch (Exception e) {
+                    log.warn("获取题目详情失败，跳过：questionId={}, error={}", questionId, e.getMessage());
+                    continue;
+                }
             }
 
             if (questionDTO == null) {
@@ -492,12 +576,11 @@ public class PaperPackageService {
                 continue;
             }
 
-            PaperQuestion paperQuestion = questionMap.get(questionId);
-
             Map<String, Object> questionData = new HashMap<>();
             questionData.put("id", questionDTO.getId());
-            questionData.put("sectionId", paperQuestion != null ? paperQuestion.getSectionId() : null);
-            questionData.put("sectionOrder", paperQuestion != null ? paperQuestion.getSectionOrder() : null);
+            // 使用当前 paperQuestion 的 sectionId 和 sectionOrder，而不是从 map 中获取
+            questionData.put("sectionId", paperQuestion.getSectionId());
+            questionData.put("sectionOrder", paperQuestion.getSectionOrder());
             questionData.put("title", questionDTO.getTitle());
             questionData.put("type", questionDTO.getType());
             questionData.put("explanationEnabled",
@@ -599,14 +682,22 @@ public class PaperPackageService {
             List<PaperVolume> volumes,
             List<PaperSection> sections,
             List<PaperIntermission> intermissions,
+            List<PaperQuestionGroup> questionGroups,
             List<Integer> questionIds) throws Exception {
+
+        // 对 questionIds 去重，避免同一道题被多次处理
+        List<Integer> uniqueQuestionIds = questionIds.stream().distinct().collect(Collectors.toList());
+        log.info("题目ID去重: 原始数量={}, 去重后数量={}", questionIds.size(), uniqueQuestionIds.size());
+
+        // 用于跟踪已添加到ZIP的文件路径，避免重复
+        Set<String> addedPaths = new HashSet<>();
 
         // 1. 试听媒体（从 question_media 表查询 media_type=10,11，以及从 Paper 实体字段获取试听音频）
         List<QuestionMedia> trialMedia = questionMediaBiz.list(
                 new LambdaQueryWrapper<QuestionMedia>()
                         .eq(QuestionMedia::getPaperId, paper.getId())
                         .in(QuestionMedia::getMediaType, Arrays.asList(10, 11)));
-        packMediaFiles(zos, trialMedia, "trial_listen/");
+        packMediaFiles(zos, trialMedia, "trial_listen/", addedPaths);
 
         // 试听音频（从 Paper 实体字段获取）
         // 试听旁白音频（介绍音频，自动播放）- 独立判断，不依赖trialListenEnabled
@@ -615,7 +706,7 @@ public class PaperPackageService {
             packMediaFileFromEntity(zos, paper.getTrialIntroAudioUrl(), paper.getTrialIntroAudioPath(),
                     "trial_intro/");
         }
-        
+
         // 试听相关音频和图片（仅在trialListenEnabled为1时打包）
         if (paper.getTrialListenEnabled() != null && paper.getTrialListenEnabled() == 1) {
             // 试听音频（用户点击播放）
@@ -625,9 +716,10 @@ public class PaperPackageService {
                         "trial_listen/");
             }
             // 操作提示图片
-            if (StringUtils.isNotEmpty(paper.getOperateListenImageUrl())
-                    || StringUtils.isNotEmpty(paper.getOperateListenImagePath())) {
-                packMediaFileFromEntity(zos, paper.getOperateListenImageUrl(), paper.getOperateListenImagePath(),
+            String operateImg = paper.getOperateListenImageUrl();
+            if ((StringUtils.isNotEmpty(operateImg) || StringUtils.isNotEmpty(paper.getOperateListenImagePath()))
+                    && !"operate_hint_default.png".equals(operateImg)) {
+                packMediaFileFromEntity(zos, operateImg, paper.getOperateListenImagePath(),
                         "operate_listen/");
             }
         }
@@ -664,12 +756,22 @@ public class PaperPackageService {
             }
         }
 
+        // 4.5 题目组音频（从 PaperQuestionGroup 实体字段获取）
+        if (questionGroups != null) {
+            for (PaperQuestionGroup group : questionGroups) {
+                if (StringUtils.isNotEmpty(group.getAudioUrl())
+                        || StringUtils.isNotEmpty(group.getAudioPath())) {
+                    packMediaFileFromEntity(zos, group.getAudioUrl(), group.getAudioPath(), "questions/groups/");
+                }
+            }
+        }
+
         // 5. 题目音频和讲解（media_type=1,4,5,6，关联到 question）
         // 注意：兼容旧数据，media_type=1 且 option_id=null 也表示题目音频
-        log.info("开始打包题目音频，题目总数: {}", questionIds.size());
+        log.info("开始打包题目音频，题目总数: {}", uniqueQuestionIds.size());
         int questionAudioCount = 0;
         int questionWithoutMediaCount = 0;
-        for (Integer questionId : questionIds) {
+        for (Integer questionId : uniqueQuestionIds) {
             List<QuestionMedia> questionMedia = questionMediaBiz.list(
                     new LambdaQueryWrapper<QuestionMedia>()
                             .eq(QuestionMedia::getQuestionId, questionId)
@@ -691,7 +793,7 @@ public class PaperPackageService {
                     // 题目音频：存储到 questions/q_{questionId}/ 目录
                     basePath = "questions/q_" + questionId + "/";
                     questionAudioCount++;
-                    log.info("打包题目音频: questionId={}, mediaType={}, mediaName={}, path={}", 
+                    log.info("打包题目音频: questionId={}, mediaType={}, mediaName={}, path={}",
                             questionId, media.getMediaType(), media.getMediaName(), basePath);
                 } else if (media.getMediaType() == 5) {
                     // 讲解音频：存储到 explanations/q_{questionId}/ 目录
@@ -700,13 +802,13 @@ public class PaperPackageService {
                     // 其他类型：存储到 questions/q_{questionId}/ 目录
                     basePath = "questions/q_" + questionId + "/";
                 }
-                packMediaFiles(zos, Arrays.asList(media), basePath);
+                packMediaFiles(zos, Arrays.asList(media), basePath, addedPaths);
             }
         }
         log.info("题目音频打包完成，共打包 {} 个题目音频文件，{} 个题目没有媒体文件", questionAudioCount, questionWithoutMediaCount);
 
         // 6. 选项音频（media_type=2，关联到 question_answer）
-        for (Integer questionId : questionIds) {
+        for (Integer questionId : uniqueQuestionIds) {
             // 获取题目的所有答案选项
             com.ruoyi.student.archive.domain.bo.question.QuestionIdBO idBO = new com.ruoyi.student.archive.domain.bo.question.QuestionIdBO();
             idBO.setId(questionId);
@@ -722,7 +824,7 @@ public class PaperPackageService {
                                     .eq(QuestionMedia::getOptionId, answer.getId())
                                     .eq(QuestionMedia::getMediaType, 2));
                     // 选项音频：存储到 options/q_{questionId}/ 目录
-                    packMediaFiles(zos, optionMedia, "options/q_" + questionId + "/");
+                    packMediaFiles(zos, optionMedia, "options/q_" + questionId + "/", addedPaths);
                 }
             }
         }
@@ -730,11 +832,23 @@ public class PaperPackageService {
 
     /**
      * 打包媒体文件到ZIP（从QuestionMedia列表）
+     * 
+     * @param addedPaths 已添加的文件路径集合，用于去重
      */
-    private void packMediaFiles(ZipOutputStream zos, List<QuestionMedia> mediaList, String basePath) throws Exception {
+    private void packMediaFiles(ZipOutputStream zos, List<QuestionMedia> mediaList, String basePath,
+            Set<String> addedPaths) throws Exception {
         for (QuestionMedia media : mediaList) {
             if (StringUtils.isEmpty(media.getMediaUrl()) && StringUtils.isEmpty(media.getMediaPath())) {
                 log.warn("媒体文件URL和Path都为空，跳过: mediaId={}, mediaName={}", media.getId(), media.getMediaName());
+                continue;
+            }
+
+            // 构建ZIP中的文件路径
+            String zipPath = basePath + media.getMediaName();
+
+            // 检查是否已添加过该文件
+            if (addedPaths.contains(zipPath)) {
+                log.info("媒体文件已存在，跳过重复添加: {}", zipPath);
                 continue;
             }
 
@@ -744,12 +858,32 @@ public class PaperPackageService {
                         ? media.getMediaPath()
                         : ossUtil.getObjectKey(media.getMediaUrl());
 
+                // 补全缺失的 exam/ 前缀
+                if (objectKey != null && !objectKey.startsWith("exam/") && !objectKey.startsWith("http")) {
+                    String[] knownPaths = { "operate_listen_image/", "trial/", "audio/", "question/", "paper/" };
+                    for (String path : knownPaths) {
+                        if (objectKey.startsWith(path)) {
+                            String newKey = "exam/" + objectKey;
+                            log.info("补全 exam/ 前缀: {} -> {}", objectKey, newKey);
+                            objectKey = newKey;
+                            break;
+                        }
+                    }
+                }
+
                 log.info("开始下载媒体文件: mediaId={}, objectKey={}, basePath={}", media.getId(), objectKey, basePath);
 
-                byte[] fileBytes = ossUtil.downloadFileToBytes(objectKey);
-
-                // 构建ZIP中的文件路径
-                String zipPath = basePath + media.getMediaName();
+                // 检测是否来自 asr-temp-audio 桶
+                // exam/audio/ 路径存储的是 ASR 解析的音频
+                byte[] fileBytes;
+                if (objectKey != null && objectKey.startsWith("exam/audio/")) {
+                    log.info("检测到文件来自 asr-temp-audio 桶，使用签名 URL 下载: {}", objectKey);
+                    String signedUrl = ossUtil.getPrivateDownloadUrlForBucket("asr-temp-audio", objectKey, 3600);
+                    fileBytes = downloadFileFromUrl(signedUrl);
+                } else {
+                    // 其他路径使用默认桶（zx-exam-paper）
+                    fileBytes = ossUtil.downloadFileToBytes(objectKey);
+                }
 
                 // 添加到ZIP
                 ZipEntry entry = new ZipEntry(zipPath);
@@ -759,10 +893,13 @@ public class PaperPackageService {
                 zos.write(fileBytes, 0, fileBytes.length);
                 zos.closeEntry();
 
+                // 记录已添加的路径
+                addedPaths.add(zipPath);
+
                 log.info("媒体文件已添加到ZIP：{}, 大小: {} 字节", zipPath, fileBytes.length);
 
             } catch (Exception e) {
-                log.error("下载媒体文件失败：mediaId={}, mediaName={}, url={}, path={}, basePath={}", 
+                log.error("下载媒体文件失败：mediaId={}, mediaName={}, url={}, path={}, basePath={}",
                         media.getId(), media.getMediaName(), media.getMediaUrl(), media.getMediaPath(), basePath, e);
                 // 继续处理下一个文件，不中断整个打包流程
             }
@@ -778,7 +915,16 @@ public class PaperPackageService {
             return;
         }
 
+        // 保留原始 URL（可能带有鉴权参数），用于 HTTP 下载回退
+        String originalMediaUrl = mediaUrl;
+
         String urlOrPath = StringUtils.isNotEmpty(mediaPath) ? mediaPath : mediaUrl;
+
+        // 清理 urlOrPath 中的查询参数（如果有），否则 OSS SDK 无法正确提取 key
+        if (StringUtils.isNotEmpty(urlOrPath) && urlOrPath.contains("?")) {
+            urlOrPath = urlOrPath.substring(0, urlOrPath.indexOf("?"));
+        }
+
         String objectKey = null;
         byte[] fileBytes = null;
 
@@ -786,6 +932,27 @@ public class PaperPackageService {
             // 从 OSS 下载文件
             // 注意：mediaPath 和 mediaUrl 都可能是完整 URL，需要提取对象键
             objectKey = ossUtil.getObjectKey(urlOrPath);
+
+            // 如果手动提取的逻辑也加上 path 清理
+            if (objectKey != null && objectKey.contains("?")) {
+                objectKey = objectKey.substring(0, objectKey.indexOf("?"));
+            }
+
+            // 补全缺失的 exam/ 前缀
+            // 某些路径存储时缺少了 exam/ 前缀（如 operate_listen_image/xxx.png）
+            // 需要补全为 exam/operate_listen_image/xxx.png
+            if (objectKey != null && !objectKey.startsWith("exam/") && !objectKey.startsWith("http")) {
+                // 已知的 OSS 路径模式，都应该在 exam/ 目录下
+                String[] knownPaths = { "operate_listen_image/", "trial/", "audio/", "question/", "paper/" };
+                for (String path : knownPaths) {
+                    if (objectKey.startsWith(path)) {
+                        String newKey = "exam/" + objectKey;
+                        log.info("补全 exam/ 前缀: {} -> {}", objectKey, newKey);
+                        objectKey = newKey;
+                        break;
+                    }
+                }
+            }
 
             log.info("下载媒体文件，原始路径: {}, 提取的对象键: {}, basePath: {}", urlOrPath, objectKey, basePath);
 
@@ -804,26 +971,141 @@ public class PaperPackageService {
 
             // 下载文件（带超时控制）
             long startTime = System.currentTimeMillis();
-            try {
-                fileBytes = ossUtil.downloadFileToBytes(objectKey);
-                long downloadTime = System.currentTimeMillis() - startTime;
-                log.info("文件下载成功（通过OSS），对象键: {}, 大小: {} 字节, 耗时: {} 毫秒", objectKey, fileBytes.length, downloadTime);
-            } catch (Exception e) {
-                // 如果OSS下载失败，且原始URL是HTTP/HTTPS URL，尝试直接下载
-                if ((urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://")) 
-                        && (e.getMessage() == null || e.getMessage().contains("404") || e.getMessage().contains("不存在"))) {
-                    log.warn("OSS下载失败，尝试直接使用原始URL下载: {}", urlOrPath);
-                    fileBytes = downloadFileFromUrl(urlOrPath);
-                    long downloadTime = System.currentTimeMillis() - startTime;
-                    log.info("文件下载成功（通过直接URL），大小: {} 字节, 耗时: {} 毫秒", fileBytes.length, downloadTime);
+
+            // 检测应该使用哪个 OSS 桶
+            // 1. 如果 URL 中包含桶域名，直接使用该桶
+            // 2. 如果是 Object Key（相对路径），通过路径模式判断：
+            // - exam/audio/ 开头：ASR 解析的音频 -> asr-temp-audio 桶
+            // - 其他路径：手动上传的文件 -> zx-exam-paper 桶
+            String targetBucket = null;
+            if (StringUtils.isNotEmpty(originalMediaUrl)) {
+                if (originalMediaUrl.contains("asr-temp-audio")) {
+                    targetBucket = "asr-temp-audio";
+                } else if (originalMediaUrl.contains("zx-exam-paper")) {
+                    targetBucket = "zx-exam-paper";
+                }
+            }
+            // 如果没有从 URL 检测到桶，通过 Object Key 路径模式判断
+            if (targetBucket == null && StringUtils.isNotEmpty(objectKey)) {
+                // exam/audio/ 路径存储的是 ASR 解析的音频
+                if (objectKey.startsWith("exam/audio/")) {
+                    targetBucket = "asr-temp-audio";
                 } else {
-                    throw e;
+                    // 其他路径（exam/trial/、exam/operate_listen_image/ 等）是手动上传的，用默认桶
+                    targetBucket = null; // 使用默认的 zx-exam-paper 桶（通过 SDK）
+                }
+            }
+            boolean isFromAsrBucket = "asr-temp-audio".equals(targetBucket);
+
+            if (isFromAsrBucket) {
+                log.info("检测到文件来自 asr-temp-audio 桶（路径: {}），将生成签名 URL 进行下载", objectKey);
+                try {
+                    // 使用 objectKey 为 asr-temp-audio 桶生成签名 URL
+                    String asrObjectKey = StringUtils.isNotEmpty(objectKey) ? objectKey
+                            : com.ruoyi.common.utils.oss.exam.question.OssUtil.extractCleanObjectKey(originalMediaUrl);
+                    log.debug("使用 objectKey: {}", asrObjectKey);
+
+                    // 为 asr-temp-audio 桶生成签名 URL
+                    String signedUrl = ossUtil.getPrivateDownloadUrlForBucket("asr-temp-audio", asrObjectKey, 3600);
+                    log.info("为 asr-temp-audio 生成签名 URL: {}", signedUrl);
+
+                    fileBytes = downloadFileFromUrl(signedUrl);
+                    long downloadTime = System.currentTimeMillis() - startTime;
+                    log.info("文件下载成功（from asr-temp-audio），大小: {} 字节, 耗时: {} 毫秒",
+                            fileBytes.length, downloadTime);
+                } catch (Exception httpEx) {
+                    log.error("从 asr-temp-audio 下载文件失败: {}", httpEx.getMessage());
+                    throw httpEx;
+                }
+            } else {
+                // 正常走 OSS SDK 下载（zx-exam-paper 桶）
+                try {
+                    fileBytes = ossUtil.downloadFileToBytes(objectKey);
+                    long downloadTime = System.currentTimeMillis() - startTime;
+                    log.info("文件下载成功（通过OSS），对象键: {}, 大小: {} 字节, 耗时: {} 毫秒", objectKey, fileBytes.length, downloadTime);
+                } catch (Exception e) {
+                    // 如果OSS下载失败，尝试使用原始URL下载
+                    boolean downloadSuccess = false;
+
+                    // 1. 如果原始路径本身就是URL，重试
+                    if (urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://")) {
+                        log.warn("OSS下载失败，尝试直接使用urlOrPath下载: {}", urlOrPath);
+                        fileBytes = downloadFileFromUrl(urlOrPath);
+                        downloadSuccess = true;
+                    }
+
+                    // 2. 如果原始路径不是URL（是相对路径），但提供了mediaUrl，尝试用mediaUrl下载
+                    // 关键：使用 originalMediaUrl（保留鉴权参数的原始 URL）
+                    if (!downloadSuccess && StringUtils.isNotEmpty(originalMediaUrl)
+                            && (originalMediaUrl.startsWith("http://") || originalMediaUrl.startsWith("https://"))) {
+                        log.warn("OSS下载失败，尝试使用原始带鉴权的URL直接下载: {}", originalMediaUrl);
+
+                        try {
+                            // 直接使用原始 URL（可能已经带有有效的鉴权签名）
+                            fileBytes = downloadFileFromUrl(originalMediaUrl);
+                            downloadSuccess = true;
+                            log.info("使用原始URL下载成功");
+                        } catch (Exception ex) {
+                            log.warn("原始URL下载失败: {}，尝试生成新签名", ex.getMessage());
+
+                            // 如果原始 URL 下载失败（可能签名过期），尝试生成新的签名 URL
+                            try {
+                                // 从 URL 提取 key
+                                String cleanUrl = originalMediaUrl.contains("?")
+                                        ? originalMediaUrl.substring(0, originalMediaUrl.indexOf("?"))
+                                        : originalMediaUrl;
+                                String keyFromUrl = ossUtil.getObjectKey(cleanUrl);
+
+                                // 如果 ossUtil 没能正确提取 key，尝试手动提取
+                                if (keyFromUrl != null && keyFromUrl.startsWith("http")) {
+                                    try {
+                                        java.net.URL url = new java.net.URL(cleanUrl);
+                                        keyFromUrl = url.getPath();
+                                        if (keyFromUrl.startsWith("/")) {
+                                            keyFromUrl = keyFromUrl.substring(1);
+                                        }
+                                    } catch (Exception ignore) {
+                                    }
+                                }
+
+                                String signedUrl = ossUtil.getPrivateDownloadUrl(keyFromUrl, 3600);
+                                log.info("生成新签名URL进行下载: {}, key: {}", signedUrl, keyFromUrl);
+                                fileBytes = downloadFileFromUrl(signedUrl);
+                                downloadSuccess = true;
+                            } catch (Exception e2) {
+                                log.error("生成签名URL方式也失败: {}", e2.getMessage());
+                            }
+                        }
+                    }
+
+                    // 3. 如果 mediaUrl 也是相对路径（不是完整 URL），直接用 objectKey 生成签名 URL
+                    if (!downloadSuccess && StringUtils.isNotEmpty(objectKey)) {
+                        log.warn("OSS SDK 下载失败，且无完整URL，尝试使用 objectKey 生成签名URL下载: {}", objectKey);
+                        try {
+                            String signedUrl = ossUtil.getPrivateDownloadUrl(objectKey, 3600);
+                            log.info("基于 objectKey 生成签名URL: {}", signedUrl);
+                            fileBytes = downloadFileFromUrl(signedUrl);
+                            downloadSuccess = true;
+                        } catch (Exception ex) {
+                            log.error("基于 objectKey 生成签名URL下载也失败: {}", ex.getMessage());
+                        }
+                    }
+
+                    if (downloadSuccess) {
+                        long downloadTime = System.currentTimeMillis() - startTime;
+                        log.info("文件下载成功（通过备用URL），大小: {} 字节, 耗时: {} 毫秒", fileBytes.length, downloadTime);
+                    } else {
+                        // 如果都失败了，记录错误但不抛出异常，避免中断整个打包过程
+                        log.error("媒体文件下载完全失败（OSS和URL均不可用），跳过该文件。Media: {}, URL: {}", objectKey, urlOrPath, e);
+                        return;
+                    }
                 }
             }
 
             // 验证下载的文件不为空
             if (fileBytes == null || fileBytes.length == 0) {
-                throw new ServiceException("下载的文件为空，对象键: " + objectKey);
+                log.warn("下载的文件为空，跳过。对象键: {}", objectKey);
+                return;
             }
 
             // 构建 ZIP 中的文件路径
@@ -842,20 +1124,20 @@ public class PaperPackageService {
 
         } catch (com.ruoyi.common.exception.ServiceException e) {
             // 业务异常，直接抛出
-            log.error("下载媒体文件失败（业务异常），url={}, path={}, objectKey={}, 错误: {}", 
+            log.error("下载媒体文件失败（业务异常），url={}, path={}, objectKey={}, 错误: {}",
                     mediaUrl, mediaPath, objectKey, e.getMessage());
             throw e;
         } catch (java.net.SocketTimeoutException e) {
             // 超时异常
-            log.error("下载媒体文件超时，url={}, path={}, objectKey={}, 错误: {}", 
+            log.error("下载媒体文件超时，url={}, path={}, objectKey={}, 错误: {}",
                     mediaUrl, mediaPath, objectKey, e.getMessage());
             throw new ServiceException("下载媒体文件超时，请检查网络连接或文件大小: " + e.getMessage());
         } catch (java.io.IOException e) {
             // IO异常（可能是404、403等）
             String errorMsg = e.getMessage();
-            log.error("下载媒体文件IO异常，url={}, path={}, objectKey={}, 错误: {}", 
+            log.error("下载媒体文件IO异常，url={}, path={}, objectKey={}, 错误: {}",
                     mediaUrl, mediaPath, objectKey, errorMsg);
-            
+
             if (errorMsg != null && (errorMsg.contains("404") || errorMsg.contains("不存在"))) {
                 log.error("404错误 - 文件不存在！原始路径: {}, 提取的对象键: {}", urlOrPath, objectKey);
                 log.error("请检查：1) 文件是否已上传到OSS 2) 对象键是否正确 3) 文件是否已被删除");
@@ -864,11 +1146,11 @@ public class PaperPackageService {
                 log.error("403错误 - 访问被拒绝！原始路径: {}, 提取的对象键: {}", urlOrPath, objectKey);
                 log.error("请检查：1) OSS存储空间是否为私有空间 2) AccessKey和SecretKey是否正确 3) 签名是否正确");
             }
-            
+
             throw new ServiceException("下载媒体文件失败: " + errorMsg);
         } catch (Exception e) {
             // 其他异常
-            log.error("下载媒体文件失败（未知异常），url={}, path={}, objectKey={}, 错误类型: {}, 错误信息: {}", 
+            log.error("下载媒体文件失败（未知异常），url={}, path={}, objectKey={}, 错误类型: {}, 错误信息: {}",
                     mediaUrl, mediaPath, objectKey, e.getClass().getName(), e.getMessage(), e);
             throw new ServiceException("下载媒体文件失败: " + e.getMessage());
         }
@@ -880,51 +1162,55 @@ public class PaperPackageService {
      */
     private byte[] downloadFileFromUrl(String url) throws Exception {
         log.info("开始从URL直接下载文件: {}", url);
-        
+
         java.net.URL fileUrl = new java.net.URL(url);
         java.net.URLConnection urlConnection = fileUrl.openConnection();
-        
+
         // 设置超时（避免卡死）
         urlConnection.setConnectTimeout(10000); // 10秒连接超时
         urlConnection.setReadTimeout(120000); // 120秒读取超时
-        
+
         // 如果是HTTPS连接，需要处理SSL证书验证
         if (urlConnection instanceof javax.net.ssl.HttpsURLConnection) {
             javax.net.ssl.HttpsURLConnection httpsConnection = (javax.net.ssl.HttpsURLConnection) urlConnection;
-            
+
             // 创建SSL上下文，跳过证书验证（仅用于解决证书域名不匹配问题）
             javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
-            sslContext.init(null, new javax.net.ssl.TrustManager[] { 
-                new javax.net.ssl.X509TrustManager() {
-                    @Override
-                    public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
-                    @Override
-                    public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
-                    @Override
-                    public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                        return new java.security.cert.X509Certificate[] {};
+            sslContext.init(null, new javax.net.ssl.TrustManager[] {
+                    new javax.net.ssl.X509TrustManager() {
+                        @Override
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {
+                        }
+
+                        @Override
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {
+                        }
+
+                        @Override
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[] {};
+                        }
                     }
-                }
             }, new java.security.SecureRandom());
             httpsConnection.setSSLSocketFactory(sslContext.getSocketFactory());
             httpsConnection.setHostnameVerifier((hostname, session) -> true);
         }
-        
+
         // 设置请求头
         urlConnection.setRequestProperty("User-Agent", "Mozilla/5.0");
-        
+
         if (urlConnection instanceof java.net.HttpURLConnection) {
             java.net.HttpURLConnection httpConnection = (java.net.HttpURLConnection) urlConnection;
             httpConnection.setRequestMethod("GET");
             httpConnection.connect();
-            
+
             int responseCode = httpConnection.getResponseCode();
             log.info("HTTP响应码: {}", responseCode);
-            
+
             if (responseCode != 200) {
                 throw new ServiceException("从URL下载文件失败，HTTP状态码: " + responseCode);
             }
-            
+
             try (InputStream inputStream = httpConnection.getInputStream()) {
                 return org.apache.commons.io.IOUtils.toByteArray(inputStream);
             } finally {
@@ -943,12 +1229,16 @@ public class PaperPackageService {
      */
     private String getMediaFileName(String mediaUrl, String mediaPath) {
         if (StringUtils.isNotEmpty(mediaPath)) {
+            // 清理 mediaPath 中的查询参数
+            String cleanPath = mediaPath.contains("?")
+                    ? mediaPath.substring(0, mediaPath.indexOf("?"))
+                    : mediaPath;
             // 从路径中提取文件名
-            int lastSlash = mediaPath.lastIndexOf('/');
-            if (lastSlash >= 0 && lastSlash < mediaPath.length() - 1) {
-                return mediaPath.substring(lastSlash + 1);
+            int lastSlash = cleanPath.lastIndexOf('/');
+            if (lastSlash >= 0 && lastSlash < cleanPath.length() - 1) {
+                return cleanPath.substring(lastSlash + 1);
             }
-            return mediaPath;
+            return cleanPath;
         } else if (StringUtils.isNotEmpty(mediaUrl)) {
             // 从URL中提取文件名
             int lastSlash = mediaUrl.lastIndexOf('/');

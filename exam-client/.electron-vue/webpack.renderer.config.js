@@ -1,8 +1,10 @@
 const path = require('path')
+const webpack = require('webpack')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const { VueLoaderPlugin } = require('vue-loader')
 
 const isDev = process.env.NODE_ENV === 'development'
+const API_BASE_URL = 'http://47.94.192.7:8818/prod-api' // 强制生产环境地址，排除环境变量干扰
 
 module.exports = {
   mode: isDev ? 'development' : 'production',
@@ -52,11 +54,7 @@ module.exports = {
       },
       {
         test: /\.(woff2?|eot|ttf|otf)(\?.*)?$/,
-        loader: 'url-loader',
-        options: {
-          limit: 10000,
-          name: 'fonts/[name].[hash:7].[ext]'
-        }
+        type: 'asset/inline' // 强制所有字体文件内联为base64，解决Windows打包后字体加载问题
       }
     ]
   },
@@ -65,6 +63,9 @@ module.exports = {
     new HtmlWebpackPlugin({
       template: './src/renderer/index.html',
       filename: 'index.html'
+    }),
+    new webpack.DefinePlugin({
+      'process.env.API_BASE_URL': JSON.stringify(API_BASE_URL)
     })
   ]
 }

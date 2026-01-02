@@ -18,6 +18,10 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
+import com.ruoyi.common.utils.http.HttpUtils;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -242,11 +246,11 @@ public class PaperController extends BaseController {
             response.setCharacterEncoding("UTF-8");
             response.setHeader("Accept-Ranges", "bytes");
             response.setHeader("Content-Length", String.valueOf(contentLength));
-            
+
             if (statusCode == 206) {
                 response.setStatus(javax.servlet.http.HttpServletResponse.SC_PARTIAL_CONTENT);
-                response.setHeader("Content-Range", 
-                    String.format("bytes %d-%d/%d", start, end, fileSize));
+                response.setHeader("Content-Range",
+                        String.format("bytes %d-%d/%d", start, end, fileSize));
             }
 
             // 文件名URL编码
@@ -269,14 +273,14 @@ public class PaperController extends BaseController {
             }
             outputStream.flush();
 
-            log.info("流式下载完成，试卷ID：{}，Range: {}-{}，传输大小: {} 字节", 
+            log.info("流式下载完成，试卷ID：{}，Range: {}-{}，传输大小: {} 字节",
                     paperId, start, end, bytesTransferred);
 
         } catch (Exception e) {
             log.error("流式下载试卷包失败，试卷ID：{}", paperId, e);
             if (!response.isCommitted()) {
                 try {
-                    response.sendError(javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR, 
+                    response.sendError(javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
                             "下载失败：" + e.getMessage());
                 } catch (Exception ex) {
                     log.error("发送错误响应失败", ex);
@@ -366,7 +370,8 @@ public class PaperController extends BaseController {
      */
     @PreAuthorize("@ss.hasPermi('paper:paper:edit')")
     @PostMapping("/initChunkUpload")
-    public AjaxResult initChunkUpload(@Validated @RequestBody com.ruoyi.student.archive.domain.bo.paper.ChunkUploadInitBO initBO) {
+    public AjaxResult initChunkUpload(
+            @Validated @RequestBody com.ruoyi.student.archive.domain.bo.paper.ChunkUploadInitBO initBO) {
         try {
             String uploadId = chunkUploadService.initChunkUpload(initBO);
             AjaxResult result = success();
@@ -406,7 +411,8 @@ public class PaperController extends BaseController {
      */
     @PreAuthorize("@ss.hasPermi('paper:paper:edit')")
     @PostMapping("/completeChunkUpload")
-    public AjaxResult completeChunkUpload(@Validated @RequestBody com.ruoyi.student.archive.domain.bo.paper.ChunkUploadCompleteBO completeBO) {
+    public AjaxResult completeChunkUpload(
+            @Validated @RequestBody com.ruoyi.student.archive.domain.bo.paper.ChunkUploadCompleteBO completeBO) {
         try {
             String fileUrl = chunkUploadService.completeChunkUpload(completeBO);
             AjaxResult result = success("分片上传完成");
@@ -430,6 +436,37 @@ public class PaperController extends BaseController {
         } catch (Exception e) {
             log.error("取消分片上传失败", e);
             return error("取消分片上传失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * TTS 工具接口转发
+     */
+    @PreAuthorize("@ss.hasPermi('paper:paper:edit')")
+    @PostMapping("/tool/tts")
+    public AjaxResult toolTTS(@RequestBody Map<String, String> params) {
+        String text = params.get("text");
+        if (text == null || text.isEmpty()) {
+            return error("文本不能为空");
+        }
+
+        try {
+            // 调用 Python 服务
+            String url = "http://127.0.0.1:8088/tools/tts";
+            String jsonBody = JSON.toJSONString(params);
+
+            String result = HttpUtils.sendPost(url, jsonBody, "application/json");
+
+            JSONObject json = JSON.parseObject(result);
+            if (json != null && json.getBooleanValue("success")) {
+                return success(json.getJSONObject("data"));
+            } else {
+                String msg = json != null ? json.getString("message") : "未知错误";
+                return error("TTS生成失败: " + msg);
+            }
+        } catch (Exception e) {
+            log.error("TTS调用失败", e);
+            return error("TTS调用失败: " + e.getMessage());
         }
     }
 }

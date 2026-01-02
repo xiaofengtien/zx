@@ -1,5 +1,6 @@
 import Vue from 'vue'
 import Router from 'vue-router'
+import Activation from '../views/Activation.vue'
 import Login from '../views/Login.vue'
 import PaperSelect from '../views/PaperSelect.vue'
 import ExamPaper from '../views/ExamPaper.vue'
@@ -18,7 +19,12 @@ export default new Router({
   routes: [
     {
       path: '/',
-      redirect: '/login'
+      redirect: '/activation'
+    },
+    {
+      path: '/activation',
+      name: 'Activation',
+      component: Activation
     },
     {
       path: '/login',

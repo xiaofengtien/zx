@@ -11,7 +11,10 @@
     "build:linux": "node .electron-vue/build.js --linux",
     "pack": "electron-builder",
     "pack:win": "electron-builder --win",
-    "pack:mac": "electron-builder --mac"
+    "pack:mac": "electron-builder --mac",
+    "pack:win:msi": "electron-builder --win --config.win.target=msi",
+    "postinstall": "npx @electron/rebuild -f -w better-sqlite3",
+    "rebuild": "npx @electron/rebuild -f -w better-sqlite3"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -23,6 +26,7 @@
     "vuex": "^3.6.2"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
     "@babel/core": "^7.28.5",
     "@babel/preset-env": "^7.28.5",
     "babel-loader": "^10.0.0",
@@ -40,20 +44,39 @@
     "webpack-dev-server": "^4.15.1"
   },
   "build": {
-    "appId": "com.exam.client",
-    "productName": "zx-exam-client",
+    "appId": "com.zexue.exam",
+    "productName": "择学",
+    "executableName": "zexue-exam",
     "directories": {
       "output": "dist"
     },
     "files": [
-      ".electron-vue/**/*",
-      "src/**/*",
-      "dist/**/*",
-      "package.json"
+      "dist/electron/**/*",
+      "dist/web/**/*",
+      "src/database/**/*",
+      ".electron-vue/main.js",
+      "package.json",
+      "!src/renderer"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/better-sqlite3",
+        "to": "node_modules/better-sqlite3"
+      },
+      {
+        "from": "node_modules/bindings",
+        "to": "node_modules/bindings"
+      },
+      {
+        "from": "node_modules/file-uri-to-path",
+        "to": "node_modules/file-uri-to-path"
+      }
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/better-sqlite3/**/*"
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/bindings/**/*",
+      "node_modules/file-uri-to-path/**/*"
     ],
     "win": {
       "target": [
@@ -66,27 +89,51 @@
       ],
       "icon": "build/icon.ico"
     },
+    "msi": {
+      "oneClick": false,
+      "perMachine": true,
+      "runAfterFinish": true
+    },
     "mac": {
       "target": [
         {
           "target": "dmg",
           "arch": [
-            "x64",
+            "x64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
             "arm64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
           ]
         }
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.education",
+      "x64ArchFiles": "Contents/Resources/**/better-sqlite3/**/*",
       "extendInfo": {
-        "CFBundleName": "择学考试端",
-        "CFBundleDisplayName": "择学考试端",
-        "CFBundleExecutable": "zx-exam-client"
+        "CFBundleName": "择学",
+        "CFBundleDisplayName": "择学",
+        "CFBundleExecutable": "择学"
       }
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "择学",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "include": "build/installer.nsh"
     }
   }
 }

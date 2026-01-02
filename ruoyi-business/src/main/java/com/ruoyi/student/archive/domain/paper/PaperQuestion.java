@@ -23,7 +23,7 @@ import java.util.Date;
 @Accessors(chain = true)
 @TableName("paper_question")
 public class PaperQuestion extends BaseEntity implements Serializable {
-    
+
     private static final long serialVersionUID = 1L;
 
     /**
@@ -53,6 +53,11 @@ public class PaperQuestion extends BaseEntity implements Serializable {
     private Integer sectionOrder;
 
     /**
+     * 题目组ID（关联paper_question_group.id，NULL表示单题）
+     */
+    private Integer groupId;
+
+    /**
      * 排序号（题目在试卷中的顺序，保留用于兼容）
      */
     private Integer sortOrder;
@@ -63,4 +68,3 @@ public class PaperQuestion extends BaseEntity implements Serializable {
     private BigDecimal score;
 
 }
-

@@ -62,7 +62,7 @@
         <el-button icon="el-icon-refresh" size="mini" @click="resetQuery">重置</el-button>
       </el-form-item>
     </el-form>
-
+    
     <el-row :gutter="10" class="mb8">
       <el-col :span="1.5">
         <el-button
@@ -85,8 +85,20 @@
           v-hasPermi="['question:question:remove']"
         >删除</el-button>
       </el-col>
+      <!-- 只有选中分类时才显示题目组管理按钮 -->
+      <el-col :span="1.5" v-if="selectedCategoryId">
+        <el-button
+          type="success"
+          plain
+          icon="el-icon-s-operation"
+          size="mini"
+          @click="handleOpenGroupPanel"
+          v-hasPermi="['question:question:list']"
+        >题目组管理</el-button>
+      </el-col>
       <right-toolbar :showSearch.sync="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
+
 
     <el-table
       v-loading="loading"
@@ -261,6 +273,148 @@
           </div>
           <el-button size="small" type="primary" icon="el-icon-plus" @click="addAnswer">添加选项</el-button>
         </el-form-item>
+        
+        <!-- 填空题编辑区域 (type=3) -->
+        <el-form-item v-if="isFillBlankType" label="填空答案" prop="blankAnswers">
+          <el-alert 
+            type="info" 
+            :closable="false" 
+            style="margin-bottom: 10px;"
+          >
+            <template slot="title">
+              <span>提示：题目中使用 <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">___</code> 表示空格，每个空格对应一个答案</span>
+            </template>
+          </el-alert>
+          <div class="blank-preview" v-if="blankCount > 0" style="margin-bottom: 15px; padding: 10px; background: #fafafa; border-radius: 4px;">
+            <span style="color: #909399; font-size: 12px;">检测到 {{ blankCount }} 个空格</span>
+          </div>
+          <div v-for="(blank, index) in form.blankAnswers" :key="index" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <span style="flex: 0 0 auto; width: 80px; color: #606266;">第 {{ index + 1 }} 空：</span>
+            <el-input 
+              v-model="form.blankAnswers[index]" 
+              placeholder="请输入正确答案" 
+              style="flex: 1;"
+            />
+            <el-button 
+              v-if="form.blankAnswers.length > 1"
+              size="small" 
+              type="danger" 
+              icon="el-icon-delete" 
+              circle 
+              @click="removeBlankAnswer(index)"
+            />
+          </div>
+          <el-button size="small" type="primary" icon="el-icon-plus" @click="addBlankAnswer">添加空格答案</el-button>
+        </el-form-item>
+        
+        <!-- 完形填空编辑区域 (type=5) -->
+        <el-form-item v-if="isClozeType" label="完形填空" prop="blankAreas">
+          <el-alert 
+            type="info" 
+            :closable="false" 
+            style="margin-bottom: 15px;"
+          >
+            <template slot="title">
+              <span>完形填空：每个空格对应一组选项（A/B/C/D），用户选择正确答案</span>
+            </template>
+          </el-alert>
+          
+          <!-- 空格区域列表 -->
+          <div v-for="(area, areaIndex) in form.blankAreas" :key="areaIndex" 
+               class="cloze-area" 
+               style="margin-bottom: 20px; padding: 15px; border: 1px solid #e4e7ed; border-radius: 8px; background: #fafafa;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <span style="font-weight: bold; color: #303133;">第 {{ areaIndex + 1 }} 空</span>
+              <el-button 
+                v-if="form.blankAreas.length > 1"
+                size="mini" 
+                type="danger" 
+                icon="el-icon-delete"
+                @click="removeBlankArea(areaIndex)"
+              >删除此空</el-button>
+            </div>
+            
+            <!-- 该空格的选项列表 -->
+            <div v-for="(option, optIndex) in area.answers" :key="optIndex" 
+                 style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+              <span style="flex: 0 0 auto; width: 30px; font-weight: bold; color: #606266;">{{ option.optionName }}</span>
+              <el-input 
+                v-model="option.optionContent" 
+                placeholder="请输入选项内容" 
+                size="small"
+                style="flex: 1;"
+              />
+              <el-checkbox 
+                v-model="option.isAnswer" 
+                :true-label="1" 
+                :false-label="0"
+                @change="handleClozeAnswerChange(areaIndex, optIndex)"
+              >正确</el-checkbox>
+              <el-button 
+                v-if="area.answers.length > 2"
+                size="mini" 
+                type="text" 
+                icon="el-icon-delete"
+                @click="removeClozeOption(areaIndex, optIndex)"
+              />
+            </div>
+            
+            <el-button 
+              size="mini" 
+              type="text" 
+              icon="el-icon-plus"
+              @click="addClozeOption(areaIndex)"
+            >添加选项</el-button>
+          </div>
+          
+          <el-button size="small" type="primary" icon="el-icon-plus" @click="addBlankArea">添加空格</el-button>
+        </el-form-item>
+        
+        <!-- 作文题编辑区域 (type=6) -->
+        <template v-if="isEssayType">
+          <el-form-item label="词数限制" prop="wordLimit">
+            <el-input-number 
+              v-model="form.wordLimit" 
+              :min="0" 
+              :max="10000" 
+              :step="50"
+              controls-position="right"
+              style="width: 150px;"
+            />
+            <span style="margin-left: 10px; color: #909399; font-size: 12px;">建议词数（0 表示不限制）</span>
+          </el-form-item>
+          <el-form-item label="写作要求" prop="requirements">
+            <div v-for="(req, index) in form.requirements" :key="index" style="display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;">
+              <span style="flex: 0 0 auto; width: 30px; color: #606266; line-height: 32px;">{{ index + 1 }}.</span>
+              <el-input 
+                v-model="form.requirements[index]" 
+                type="textarea"
+                :rows="2"
+                placeholder="请输入写作要求" 
+                style="flex: 1;"
+              />
+              <el-button 
+                v-if="form.requirements.length > 1"
+                size="small" 
+                type="danger" 
+                icon="el-icon-delete" 
+                circle 
+                @click="removeRequirement(index)"
+                style="margin-top: 4px;"
+              />
+            </div>
+            <el-button size="small" type="primary" icon="el-icon-plus" @click="addRequirement">添加写作要求</el-button>
+          </el-form-item>
+          <el-form-item label="参考范文" prop="sampleAnswer">
+            <el-input 
+              v-model="form.sampleAnswer" 
+              type="textarea" 
+              :rows="6" 
+              placeholder="请输入参考范文（选填）"
+            />
+          </el-form-item>
+        </template>
+        
         <el-form-item label="解析" prop="analyzes">
           <el-input v-model="form.analyzes" type="textarea" :rows="3" class="question-input-right-align" placeholder="请输入题目解析" />
         </el-form-item>
@@ -369,6 +523,14 @@
         </div>
       </div>
     </div>
+    <!-- 题目组面板 (抽屉) -->
+    <question-group-panel
+      ref="groupPanel"
+      v-show="selectedCategoryId"
+      :category-id="selectedCategoryId || 0"
+      :dict-question-type="dict.type.question_type || []"
+      @play-audio="handlePlayGroupAudio"
+    />
   </div>
 </template>
 
@@ -383,19 +545,18 @@ import { getToken } from "@/utils/auth"
 import { encodeUrlFileName as encodeFileNameHelper } from "@/utils/media"
 import { Splitpanes, Pane } from "splitpanes"
 import "splitpanes/dist/splitpanes.css"
+import QuestionGroupPanel from "./components/QuestionGroupPanel.vue"
 
 export default {
   name: "Question",
   dicts: ['question_type', 'subject'],
-  components: { Treeselect, ImageUpload, OssUpload, Splitpanes, Pane },
+  components: { Treeselect, ImageUpload, OssUpload, Splitpanes, Pane, QuestionGroupPanel },
   created() {
     // 确保字典加载完成后再加载数据
     this.$nextTick(() => {
       this.getList()
       this.loadCategoryTree()
     })
-    // 监听页面点击事件，当点击非分类树区域时，清空选中状态
-    document.addEventListener('click', this.handleDocumentClick)
   },
   mounted() {
     // 监听ESC键关闭音频播放器
@@ -407,8 +568,6 @@ export default {
     document.addEventListener('keydown', this.handleKeydown)
   },
   beforeDestroy() {
-    // 移除事件监听
-    document.removeEventListener('click', this.handleDocumentClick)
     // 关闭音频播放器
     this.closeAudioPlayer()
     // 移除键盘事件监听
@@ -524,16 +683,34 @@ export default {
     }
   },
   computed: {
-    // 是否显示选项类型
+    // 是否显示选项类型（普通选项编辑）
     showOptionType() {
       // 修复：当 type 为 0 时，!this.form.type 会返回 true，需要明确判断
       if (this.form.type === undefined || this.form.type === null || this.form.type === '') return false
-      // 单选题、多选题、判断题、完形填空需要选项
-      return [0, 1, 2, 5].includes(parseInt(this.form.type))
+      // 单选题、多选题、判断题、阅读理解需要选项（完形填空使用专用UI）
+      return [0, 1, 2, 7].includes(parseInt(this.form.type))
     },
     // 是否显示答案选项
     showAnswers() {
       return this.showOptionType && this.form.answers && this.form.answers.length > 0
+    },
+    // 是否为填空题 (type=3)
+    isFillBlankType() {
+      return parseInt(this.form.type) === 3
+    },
+    // 是否为作文题 (type=6)
+    isEssayType() {
+      return parseInt(this.form.type) === 6
+    },
+    // 题目中的空格数量（用于填空题）
+    blankCount() {
+      if (!this.form.title) return 0
+      const matches = this.form.title.match(/_{2,}/g)
+      return matches ? matches.length : 0
+    },
+    // 是否为完形填空 (type=5)
+    isClozeType() {
+      return parseInt(this.form.type) === 5
     }
   },
   watch: {
@@ -678,11 +855,13 @@ export default {
         // 1. 点击的是新增按钮（会在 handleAdd 中处理）
         // 2. 点击的是对话框（不需要清空）
         // 3. 点击的是分类树相关的元素（搜索框等）
+        // 4. 点击的是题目组面板区域
         const isAddButton = event.target.closest('.el-button')?.textContent?.includes('新增')
         const isDialog = event.target.closest('.el-dialog')
         const isCategorySearch = event.target.closest('.head-container')
+        const isQuestionGroupPanel = event.target.closest('.question-group-panel')
 
-        if (!isAddButton && !isDialog && !isCategorySearch) {
+        if (!isAddButton && !isDialog && !isCategorySearch && !isQuestionGroupPanel) {
           this.clearCategorySelection()
         }
       }
@@ -758,7 +937,15 @@ export default {
         weight: 1,
         answer: undefined,
         analyzes: undefined,
-        answers: [] // 初始化为空数组
+        answers: [], // 初始化为空数组
+        // 填空题字段
+        blankAnswers: [''], // 默认一个空格答案
+        // 完形填空字段
+        blankAreas: [], // 空格区域列表
+        // 作文题字段
+        wordLimit: 0,
+        requirements: [''], // 默认一个写作要求
+        sampleAnswer: ''
       }
       this.showMediaOptions = false
       this.showOptionMediaOptions = false
@@ -827,10 +1014,10 @@ export default {
         return
       }
       const type = parseInt(this.form.type)
-      // 单选题、多选题、判断题、完形填空需要选项
-      if ([0, 1, 2, 5].includes(type)) {
-        // 单选题、多选题、完形填空默认添加4个选项（A、B、C、D）
-        if (type === 0 || type === 1 || type === 5) {
+      // 单选题、多选题、判断题、阅读理解需要选项（完形填空使用 blankAreas）
+      if ([0, 1, 2, 7].includes(type)) {
+        // 单选题、多选题、阅读理解默认添加4个选项（A、B、C、D）
+        if (type === 0 || type === 1 || type === 7) {
           const answers = [
             { optionName: 'A', optionContent: '', isAnswer: 0, mediaUrl: undefined },
             { optionName: 'B', optionContent: '', isAnswer: 0, mediaUrl: undefined },
@@ -845,6 +1032,31 @@ export default {
             { optionName: 'B', optionContent: '错误', isAnswer: 0, mediaUrl: undefined }
           ]
           this.$set(this.form, 'answers', answers)
+        }
+      } else if (type === 5) {
+        // 完形填空：使用 blankAreas，每个空格有独立的选项
+        this.$set(this.form, 'answers', [])
+        if (!this.form.blankAreas || this.form.blankAreas.length === 0) {
+          // 默认初始化一个空格区域，包含4个选项
+          this.$set(this.form, 'blankAreas', [this.createDefaultBlankArea(1)])
+        }
+      } else if (type === 3) {
+        // 填空题：初始化空格答案数组
+        this.$set(this.form, 'answers', [])
+        if (!this.form.blankAnswers || this.form.blankAnswers.length === 0) {
+          this.$set(this.form, 'blankAnswers', [''])
+        }
+      } else if (type === 6) {
+        // 作文题：初始化写作要求数组
+        this.$set(this.form, 'answers', [])
+        if (!this.form.requirements || this.form.requirements.length === 0) {
+          this.$set(this.form, 'requirements', [''])
+        }
+        if (this.form.wordLimit === undefined) {
+          this.$set(this.form, 'wordLimit', 0)
+        }
+        if (this.form.sampleAnswer === undefined) {
+          this.$set(this.form, 'sampleAnswer', '')
         }
       } else {
         this.$set(this.form, 'answers', [])
@@ -952,10 +1164,10 @@ export default {
     },
     /** 答案选项改变 */
     handleAnswerChange(changedAnswer) {
-      // 如果是单选题或判断题，确保只有一个正确答案
+      // 如果是单选题、判断题或阅读理解题，确保只有一个正确答案
       const questionType = parseInt(this.form.type)
-      if (questionType === 0 || questionType === 2) {
-        // 单选题或判断题：如果当前选项被选中为正确答案，取消其他选项的正确答案标记
+      if (questionType === 0 || questionType === 2 || questionType === 7) {
+        // 单选题、判断题或阅读理解题：如果当前选项被选中为正确答案，取消其他选项的正确答案标记
         const isCurrentAnswer = changedAnswer.isAnswer === 1 || changedAnswer.isAnswer === '1' || changedAnswer.isAnswer === true
         if (isCurrentAnswer) {
           // 如果当前选项被选中为正确答案，取消其他所有选项的正确答案标记
@@ -1026,6 +1238,16 @@ export default {
           callback(new Error('完形填空至少需要选择一个正确答案'))
           return
         }
+      } else if (questionType === 7) {
+        // 阅读理解：有且只能有一个正确答案（与单选题相同）
+        if (correctAnswers.length === 0) {
+          callback(new Error('阅读理解题必须选择一个正确答案'))
+          return
+        }
+        if (correctAnswers.length > 1) {
+          callback(new Error('阅读理解题只能有一个正确答案，请取消其他选项的正确答案标记'))
+          return
+        }
       }
 
       callback()
@@ -1044,6 +1266,84 @@ export default {
     /** 删除答案选项 */
     removeAnswer(index) {
       this.form.answers.splice(index, 1)
+    },
+    /** 添加填空题答案 */
+    addBlankAnswer() {
+      if (!this.form.blankAnswers) {
+        this.$set(this.form, 'blankAnswers', [])
+      }
+      this.form.blankAnswers.push('')
+    },
+    /** 删除填空题答案 */
+    removeBlankAnswer(index) {
+      this.form.blankAnswers.splice(index, 1)
+    },
+    /** 添加写作要求 */
+    addRequirement() {
+      if (!this.form.requirements) {
+        this.$set(this.form, 'requirements', [])
+      }
+      this.form.requirements.push('')
+    },
+    /** 删除写作要求 */
+    removeRequirement(index) {
+      this.form.requirements.splice(index, 1)
+    },
+    /** 创建默认的空格区域（完形填空） */
+    createDefaultBlankArea(blankIndex) {
+      return {
+        blankIndex: blankIndex,
+        answers: [
+          { optionName: 'A', optionContent: '', isAnswer: 0 },
+          { optionName: 'B', optionContent: '', isAnswer: 0 },
+          { optionName: 'C', optionContent: '', isAnswer: 0 },
+          { optionName: 'D', optionContent: '', isAnswer: 0 }
+        ]
+      }
+    },
+    /** 添加空格区域（完形填空） */
+    addBlankArea() {
+      if (!this.form.blankAreas) {
+        this.$set(this.form, 'blankAreas', [])
+      }
+      const nextIndex = this.form.blankAreas.length + 1
+      this.form.blankAreas.push(this.createDefaultBlankArea(nextIndex))
+    },
+    /** 删除空格区域（完形填空） */
+    removeBlankArea(areaIndex) {
+      this.form.blankAreas.splice(areaIndex, 1)
+      // 重新编号
+      this.form.blankAreas.forEach((area, idx) => {
+        area.blankIndex = idx + 1
+      })
+    },
+    /** 添加完形填空选项 */
+    addClozeOption(areaIndex) {
+      const area = this.form.blankAreas[areaIndex]
+      const optionNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+      const nextName = optionNames[area.answers.length] || String.fromCharCode(65 + area.answers.length)
+      area.answers.push({
+        optionName: nextName,
+        optionContent: '',
+        isAnswer: 0
+      })
+    },
+    /** 删除完形填空选项 */
+    removeClozeOption(areaIndex, optIndex) {
+      this.form.blankAreas[areaIndex].answers.splice(optIndex, 1)
+    },
+    /** 完形填空答案改变（确保每个空格只有一个正确答案） */
+    handleClozeAnswerChange(areaIndex, changedOptIndex) {
+      const area = this.form.blankAreas[areaIndex]
+      const changedOpt = area.answers[changedOptIndex]
+      // 如果当前选项被选中为正确答案，取消其他选项
+      if (changedOpt.isAnswer === 1) {
+        area.answers.forEach((opt, idx) => {
+          if (idx !== changedOptIndex) {
+            opt.isAnswer = 0
+          }
+        })
+      }
     },
     /** 媒体文件上传成功 */
     handleMediaUploadSuccess(response, file, fileList) {
@@ -1247,6 +1547,14 @@ export default {
         this.$modal.msgError((response && response.msg) || '上传失败')
       }
     },
+    /** 
+     * 打开题目组管理面板
+     */
+    handleOpenGroupPanel() {
+      if (this.$refs.groupPanel) {
+        this.$refs.groupPanel.open()
+      }
+    },
     /** 删除答案媒体文件 */
     handleAnswerMediaRemove(file, fileList, answerIndex) {
       // 确保 answer 对象存在
@@ -1275,6 +1583,15 @@ export default {
       } else {
         this.$modal.msgWarning('不支持预览此文件类型')
       }
+    },
+    /** 播放题目组音频 */
+    handlePlayGroupAudio(audioUrl) {
+      if (!audioUrl) {
+        this.$modal.msgWarning('音频地址不存在')
+        return
+      }
+      // 复用现有的音频播放逻辑
+      this.playMediaAudio(audioUrl, '题目组音频')
     },
     encodeUrlFileName: encodeFileNameHelper,
     /** 播放答案音频（全屏遮盖） */
@@ -1715,12 +2032,32 @@ export default {
           mediaUrl: answerMediaUrl
         }
       })
+      // 转换完形填空区域
+      let blankAreas = []
+      if (dto.blankAreas && dto.blankAreas.length > 0) {
+        blankAreas = dto.blankAreas.map(area => ({
+          id: area.id,
+          blankIndex: area.blankIndex || 1,
+          answers: (area.answers || []).map(answer => {
+            let isAnswer = answer.isAnswer || 0
+            if (isAnswer === 2) {
+              isAnswer = 1
+            }
+            return {
+              id: answer.id,
+              optionName: answer.optionName || '',
+              optionContent: answer.optionContent || '',
+              isAnswer: isAnswer
+            }
+          })
+        }))
+      }
 
       return {
         id: dto.id,
         questionCategoryId: dto.questionCategoryId,
-        subjectId: dto.subjectId,
-        type: dto.type,
+        subjectId: dto.subjectId != null ? parseInt(dto.subjectId) : undefined,
+        type: dto.type != null ? parseInt(dto.type) : undefined,
         title: dto.title,
         mediaType: dto.mediaType || 1,
         mediaUrl: mediaUrl,
@@ -1728,7 +2065,15 @@ export default {
         weight: dto.weight || 1,
         answer: dto.answer,
         analyzes: dto.analyzes,
-        answers: answers
+        answers: answers,
+        // 填空题字段
+        blankAnswers: dto.blankAnswers || (dto.answer ? dto.answer.split(/[,，;；]/) : ['']),
+        // 完形填空字段
+        blankAreas: blankAreas.length > 0 ? blankAreas : [],
+        // 作文题字段
+        wordLimit: dto.wordLimit || 0,
+        requirements: dto.requirements || [''],
+        sampleAnswer: dto.sampleAnswer || ''
       }
     },
     /** 提交按钮 */
@@ -1808,7 +2153,19 @@ export default {
         .map((answer, index) => index + 1)
         .join(',')
 
-      return {
+      // 根据题型处理答案字段
+      const questionType = parseInt(this.form.type)
+      let answer = answerIds
+      
+      if (questionType === 3) {
+        // 填空题：答案为多个空格答案用逗号分隔
+        answer = (this.form.blankAnswers || []).filter(a => a && a.trim()).join(',')
+      } else if (questionType === 6) {
+        // 作文题：答案为参考范文
+        answer = this.form.sampleAnswer || ''
+      }
+
+      const result = {
         id: this.form.id,
         questionCategoryId: this.form.questionCategoryId,
         subjectId: this.form.subjectId,
@@ -1818,10 +2175,42 @@ export default {
         mediaUrl: mediaUrl,
         optionType: this.form.optionType,
         weight: this.form.weight,
-        answer: answerIds,
+        answer: answer,
         analyzes: this.form.analyzes,
         answers: answers
       }
+      
+      // 作文题添加额外字段
+      if (questionType === 6) {
+        result.wordLimit = this.form.wordLimit || 0
+        result.requirements = (this.form.requirements || []).filter(r => r && r.trim())
+        result.sampleAnswer = this.form.sampleAnswer || ''
+      }
+      
+      // 填空题添加额外字段
+      if (questionType === 3) {
+        result.blankAnswers = (this.form.blankAnswers || []).filter(a => a && a.trim())
+      }
+      
+      // 完形填空添加 blankAreas
+      if (questionType === 5) {
+        result.blankAreas = (this.form.blankAreas || []).map((area, areaIdx) => ({
+          id: area.id,
+          blankIndex: areaIdx + 1,
+          answers: (area.answers || []).map((opt, optIdx) => ({
+            id: opt.id,
+            serialNo: optIdx + 1,
+            optionName: opt.optionName,
+            optionContent: opt.optionContent,
+            // 转换 isAnswer：前端 1 -> 后端 2
+            isAnswer: opt.isAnswer === 1 ? 2 : 0
+          }))
+        }))
+        // 完形填空不使用普通的 answers
+        result.answers = []
+      }
+      
+      return result
     },
     /** 处理上传进度 */
     handleUploadProgress(type, isUploading) {

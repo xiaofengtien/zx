@@ -1,6 +1,8 @@
 const axios = require('axios')
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8080'
+const { app } = require('electron')
+
+const API_BASE_URL = app.isPackaged ? 'http://47.94.192.7:8818/prod-api' : (process.env.API_BASE_URL || 'http://localhost:8080')
 
 /**
  * 表结构同步服务
@@ -76,7 +78,7 @@ class SchemaSyncService {
     if (!mysqlType) return 'TEXT'
 
     const type = mysqlType.toUpperCase()
-    
+
     // 整数类型
     if (type.includes('INT')) {
       if (type.includes('BIGINT')) {
@@ -84,27 +86,27 @@ class SchemaSyncService {
       }
       return 'INTEGER'
     }
-    
+
     // 浮点类型
     if (type.includes('DECIMAL') || type.includes('FLOAT') || type.includes('DOUBLE')) {
       return 'REAL'
     }
-    
+
     // 文本类型
     if (type.includes('TEXT') || type.includes('VARCHAR') || type.includes('CHAR')) {
       return 'TEXT'
     }
-    
+
     // 日期时间类型
     if (type.includes('DATE') || type.includes('TIME')) {
       return 'INTEGER' // SQLite使用INTEGER存储时间戳
     }
-    
+
     // 布尔类型
     if (type.includes('BOOLEAN') || type.includes('TINYINT(1)')) {
       return 'INTEGER'
     }
-    
+
     // 默认返回TEXT
     return 'TEXT'
   }
@@ -150,12 +152,12 @@ class SchemaSyncService {
         try {
           const columnName = column.column_name
           const columnType = this.convertMySQLTypeToSQLite(column.column_type)
-          
+
           console.log(`添加字段: ${columnName} (${columnType})`)
-          
+
           this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`)
           addedCount++
-          
+
           console.log(`✓ 字段 ${columnName} 添加成功`)
         } catch (error) {
           console.error(`添加字段 ${column.column_name} 失败:`, error.message)

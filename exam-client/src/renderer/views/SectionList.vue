@@ -1,5 +1,30 @@
 <template>
   <div class="section-list-container">
+    <!-- 中场遮罩 -->
+    <div v-if="showIntermission" class="intermission-overlay">
+      <div class="intermission-content">
+        <div class="intermission-audio-indicator">
+          <span class="pulse-dot"></span>
+          <span class="pulse-text">{{ intermissionAudioPlaying ? '音频播放中' : '中场休息' }}</span>
+        </div>
+        <div class="intermission-text" v-html="intermissionText"></div>
+        <el-button
+          v-if="intermissionCanSkip"
+          class="intermission-skip"
+          type="primary"
+          @click="skipIntermission"
+        >
+          跳过中场，继续下一卷
+        </el-button>
+      </div>
+      <audio
+        ref="intermissionAudioPlayer"
+        :src="intermissionAudioPath"
+        @ended="onIntermissionAudioEnded"
+        @error="onIntermissionAudioError"
+      ></audio>
+    </div>
+
     <!-- 卷别完成提示遮罩 -->
     <div v-if="showVolumeComplete" class="volume-complete-overlay">
       <div class="complete-message">
@@ -14,23 +39,29 @@
     <div class="main-content">
       <!-- 固定悬浮头部（始终显示） -->
       <div class="fixed-header">
-        <!-- 大题标题 -->
-        <div class="header-section-title">{{ currentPlayingSectionName || currentSectionName }}</div>
-        
-        <!-- 题号信息（仅在显示题目时显示） -->
-        <div v-if="showQuestions" class="header-question-info">第 {{ currentQuestionIndex + 1 }} 题 / 共 {{ allQuestions.length }} 题</div>
-        
-        <!-- 倒计时 -->
-        <div v-if="answerCountdown > 0" class="header-countdown" :class="{ 'countdown-warning': answerCountdown <= 5 }">
-          <span class="countdown-number">{{ answerCountdown }}</span>
-          <span class="countdown-text">秒</span>
+        <div class="header-top-row">
+          <!-- 大题标题 -->
+          <div class="header-section-title">{{ currentPlayingSectionName || currentSectionName }}</div>
+          
+          <!-- 题号信息（仅在显示题目时显示） -->
+          <div v-if="showQuestions" class="header-question-info">第 {{ currentQuestionIndex + 1 }} 题 / 共 {{ allQuestions.length }} 题</div>
+          
+          <!-- 倒计时（仅在显示题目且大题音频未播放时显示） -->
+          <div v-if="answerCountdown > 0 && showQuestions && !sectionAudioPlaying" class="header-countdown" :class="{ 'countdown-warning': answerCountdown <= 5 }">
+            <span class="countdown-number">{{ answerCountdown }}</span>
+            <span class="countdown-text">秒</span>
+          </div>
+          
+          <!-- 音频播放标识 -->
+          <div v-if="questionAudioPlaying || sectionAudioPlaying" class="header-audio-indicator">
+            <i class="el-icon-headset"></i>
+            <span>播放中</span>
+          </div>
         </div>
         
-        <!-- 音频播放标识 -->
-        <div v-if="questionAudioPlaying || sectionAudioPlaying" class="header-audio-indicator">
-          <i class="el-icon-headset"></i>
-          <span>播放中</span>
-        </div>
+        <!-- 大题说明文案 -->
+        <!-- 大题说明文案：仅在非题目组模式下显示，避免与题目组说明重复 -->
+        <div v-if="currentInstructionText && !isInQuestionGroup" class="header-instruction-text">{{ currentInstructionText }}</div>
       </div>
 
       <!-- 大题音频播放时显示（空白区域，等待音频播放完成） -->
@@ -39,7 +70,15 @@
       </div>
 
       <!-- 题目显示区域（音频播放完成后显示） -->
-      <div v-if="showQuestions && currentQuestion" class="questions-wrapper">
+      <!-- 题目显示区域（音频播放完成后显示） -->
+      <div v-if="showQuestions && (currentQuestion || isInQuestionGroup)" class="questions-wrapper">
+        
+        <!-- 题目组说明区域 -->
+        <div v-if="isInQuestionGroup && currentQuestionGroup" class="group-intro-container">
+<!--           <div class="group-name">{{ currentQuestionGroup.group_name }}</div>-->
+           <div class="group-text" v-if="currentQuestionGroup.group_name || currentQuestionGroup.groupName">{{ currentQuestionGroup.group_name || currentQuestionGroup.groupName }}</div>
+           <div class="group-text" v-if="currentQuestionGroup.text">{{ currentQuestionGroup.text }}</div>
+        </div>
 
         <!-- 题目内容区域（可滚动，显示多题） -->
         <div class="question-content-wrapper">
@@ -50,12 +89,12 @@
             class="question-container" 
             :class="{ 
               'question-expired': isQuestionExpired(getQuestionGlobalIndex(index)),
-              'question-current': getQuestionGlobalIndex(index) === currentQuestionIndex
+              'question-current': !isInQuestionGroup && getQuestionGlobalIndex(index) === currentQuestionIndex
             }"
             :ref="getQuestionGlobalIndex(index) === currentQuestionIndex ? 'currentQuestionElement' : null"
           >
             <div class="question-header-inline">
-              <span v-if="getQuestionGlobalIndex(index) === currentQuestionIndex" class="current-arrow-indicator">▶</span>
+              <span v-if="!isInQuestionGroup && getQuestionGlobalIndex(index) === currentQuestionIndex" class="current-arrow-indicator">▶</span>
               <span class="question-number-badge">第 {{ getQuestionGlobalIndex(index) + 1 }} 题</span>
             </div>
             
@@ -156,16 +195,16 @@
           </div>
           <div class="question-numbers">
             <span 
-              v-for="(questionNum, qIndex) in getQuestionNumbers(section.id)" 
-              :key="questionNum"
+              v-for="(item, qIndex) in getQuestionNumbers(section.id)" 
+              :key="item.id"
               class="question-number"
               :class="{
                 'question-number-current': isCurrentQuestion(section.id, qIndex),
-                'question-number-answered': isQuestionAnswered(section.id, qIndex),
+                'question-number-answered': isQuestionAnswered(item.id),
                 'question-number-expired': isQuestionExpiredBySection(section.id, qIndex)
               }"
             >
-              {{ questionNum }}
+              {{ item.no }}
             </span>
           </div>
         </div>
@@ -210,6 +249,14 @@
       @ended="onQuestionAudioEnded"
       @error="onQuestionAudioError"
     ></audio>
+
+    <!-- 题目组音频播放器 -->
+    <audio
+      ref="groupAudioPlayer"
+      :src="groupAudioPath"
+      @ended="onGroupAudioEnded"
+      @error="onGroupAudioError"
+    ></audio>
   </div>
 </template>
 
@@ -229,23 +276,28 @@ function logToMain(level, ...args) {
 }
 
 // 重写 console.log, console.warn, console.error 以同时输出到主进程
-const originalLog = console.log
-const originalWarn = console.warn
-const originalError = console.error
+// 使用全局标记防止多次重写（导致日志重复输出）
+if (!window.__consoleLogOverridden) {
+  window.__consoleLogOverridden = true
+  
+  const originalLog = console.log
+  const originalWarn = console.warn
+  const originalError = console.error
 
-console.log = function(...args) {
-  originalLog.apply(console, args)
-  logToMain('info', ...args)
-}
+  console.log = function(...args) {
+    originalLog.apply(console, args)
+    logToMain('info', ...args)
+  }
 
-console.warn = function(...args) {
-  originalWarn.apply(console, args)
-  logToMain('warn', ...args)
-}
+  console.warn = function(...args) {
+    originalWarn.apply(console, args)
+    logToMain('warn', ...args)
+  }
 
-console.error = function(...args) {
-  originalError.apply(console, args)
-  logToMain('error', ...args)
+  console.error = function(...args) {
+    originalError.apply(console, args)
+    logToMain('error', ...args)
+  }
 }
 
 // 递归处理所有文本字段，确保UTF-8编码正确
@@ -277,6 +329,9 @@ function processTextFields(obj) {
   }
   return obj
 }
+
+// 单例控制：只允许一个活跃实例控制计时器
+let activeInstanceId = null
 
 export default {
   name: 'SectionList',
@@ -318,6 +373,13 @@ export default {
       questionAudioPlayCount: 1, // 题目音频需要播放的次数（从大题设置获取）
       questionAudioPlayedCount: 0, // 题目音频已播放的次数
       questionAudioTimer: null, // 题目音频相关定时器
+      // 题目组相关
+      questionGroups: [], // 当前大题下的题目组
+      groupAudioPath: '', // 题目组音频路径
+      groupAudioPlaying: false, // 题目组音频是否正在播放
+      playedGroupAudios: new Set(), // 已播放过的题目组音频ID
+      groupAudioTimer: null, // 题目组音频定时器
+      processingTimeUp: false, // 防抖锁：是否正在处理时间结束逻辑
       isPlayingQuestionAudio: false, // 是否正在执行播放题目音频的逻辑（防重复调用）
       // 答题计时
       answerTime: 5, // 答题时间（秒，从大题设置获取）
@@ -327,11 +389,19 @@ export default {
       expiredQuestionIndexes: [], // 已过期的题目索引列表
       answeredQuestions: {}, // 已答题记录 { questionIndex: answerId }
       answeredTimeSpent: {}, // 已答题用时记录 { questionIndex: timeSpent }
-      autoNextTimer: null, // 选择答案后自动跳转下一题的定时器
       // 卷别完成提示
       showVolumeComplete: false, // 是否显示卷别完成提示
       volumeCompleteText: '', // 完成提示文字
-      isAllComplete: false // 是否所有卷别都完成
+      isAllComplete: false, // 是否所有卷别都完成
+      // 中场状态
+      showIntermission: false,
+      intermissionText: '',
+      intermissionAudioPath: '',
+      intermissionAudioPlaying: false,
+      intermissionCanSkip: false,
+      pendingNextVolumeId: null,
+      pendingNextVolumeCode: null,
+      intermissionAudioEndTimer: null
     }
   },
   computed: {
@@ -369,9 +439,109 @@ export default {
       
       // 如果找不到，返回第一个大题的名称
       return this.currentVolumeSections[0]?.section_name || this.currentVolumeSections[0]?.sectionName || ''
-    }
+    },
+
+    // 当前大题说明文案
+    currentInstructionText() {
+       let section = null;
+       if (!this.showQuestions) {
+           // 播放音频阶段，取 currentSectionIndex 对应的大题
+           if (this.currentVolumeSections.length) {
+               section = this.currentVolumeSections[this.currentSectionIndex];
+           }
+       } else {
+           // 答题阶段，取当前题目所属的大题
+           if (this.currentQuestion && this.currentVolumeSections.length) {
+                 const questionSectionId = this.currentQuestion.sectionId || this.currentQuestion.section_id
+                 if (questionSectionId) {
+                    section = this.currentVolumeSections.find(s => s.id === questionSectionId)
+                 }
+           }
+           // 如果找不到，默认显示第一大题
+           if (!section && this.currentVolumeSections.length) {
+               section = this.currentVolumeSections[0];
+           }
+       }
+       return section?.instructionText || section?.instruction_text || ''
+    },
+    
+    // 当前题目是否属于题目组
+    isInQuestionGroup() {
+      if (!this.currentQuestion) return false
+      // 检查当前题目是否有关联的 group 信息
+      const question = this.allQuestions[this.currentQuestionIndex]
+      if (!question) return false
+      return !!(question.group || question.groupId || question.group_id)
+    },
+    
+    // 当前题目所属的题目组
+    currentQuestionGroup() {
+      if (!this.isInQuestionGroup) return null
+      const question = this.allQuestions[this.currentQuestionIndex]
+      if (!question) return null
+
+      // 如果题目直接包含 group 对象
+      if (question.group && typeof question.group === 'object') {
+        return question.group
+      }
+
+      // 如果只有 groupId，从 questionGroups 中查找
+      const groupId = question.groupId || question.group_id
+      if (groupId && this.questionGroups.length > 0) {
+        return this.questionGroups.find(g => g.id === groupId) || null
+      }
+
+      return null
+    },
+
+    // 当前题目组的所有题目
+    currentGroupQuestions() {
+      if (!this.isInQuestionGroup || !this.currentQuestionGroup) {
+        return []
+      }
+      const group = this.currentQuestionGroup
+      
+      // 1. 优先：严格按照题目组定义的 Selected Question IDs 顺序显示
+      // 这能纠正题目本身 sort_order 错乱的问题
+      if (group.questionIds && group.questionIds.length > 0) {
+          return group.questionIds.map(id => {
+              // 宽松匹配 ID
+              return this.allQuestions.find(q => (q.id || q.questionId || q.question_id) == id)
+          }).filter(q => q)
+      }
+
+      const groupId = group.id
+      const filterQs = this.allQuestions.filter(q => {
+        const qGroupId = q.groupId || q.group_id || (q.group && q.group.id)
+        return qGroupId === groupId
+      })
+      // 按 sort_order 或 id 排序
+      return filterQs.sort((a, b) => {
+        const orderA = a.sort_order || a.question_sort || a.id
+        const orderB = b.sort_order || b.question_sort || b.id
+        return orderA - orderB
+      })
+    },
+
+  },
+  beforeDestroy() {
+    this.cleanupResources()
+  },
+  deactivated() {
+    this.cleanupResources()
   },
   async mounted() {
+    // ========== 调试标记 - 如果你看到这个alert，说明新代码已加载 ==========
+    console.log('🔴🔴🔴 [DEBUG] NEW CODE LOADED - MOUNTED 🔴🔴🔴')
+    
+    // 生成唯一实例ID，设为活跃实例
+    this._instanceId = Date.now() + Math.random()
+    activeInstanceId = this._instanceId
+    console.log(`🚀 [SectionList] mounted, instanceId=${this._instanceId}`)
+    
+    // 清理可能存在的旧状态
+    this.cleanupResources()
+    
     console.log('🚀 SectionList.vue mounted 开始')
     
     // 获取试卷ID和当前卷别信息
@@ -402,6 +572,42 @@ export default {
   },
 
   methods: {
+    cleanupResources() {
+        console.log('🧹 [SectionList] cleanupResources')
+        this.stopAudioVisualization()
+        
+        // Clear all timers
+        const timers = [
+          'sectionAudioTimer', 
+          'questionAudioTimer', 
+          'groupAudioTimer', 
+          'answerCountdownTimer', 
+          'questionsLoadTimer', 
+          'intermissionAudioEndTimer'
+        ]
+        timers.forEach(t => {
+          if (this[t]) {
+            clearTimeout(this[t])
+            this[t] = null
+          }
+        })
+        
+        // Stop Audios
+        const audios = ['sectionAudioPlayer', 'questionAudioPlayer', 'groupAudioPlayer', 'intermissionAudioPlayer']
+        audios.forEach(refName => {
+            const audio = this.$refs[refName]
+            if (audio) {
+                audio.pause()
+                audio.src = ''
+            }
+        })
+    
+        this.isPlayingQuestionAudio = false
+        this.processingTimeUp = false
+        this.sectionAudioPlaying = false
+        this.questionAudioPlaying = false
+        this.groupAudioPlaying = false
+    },
     /**
      * 初始化或复用答题记录
      */
@@ -421,6 +627,14 @@ export default {
         if (unsubmittedPaperInfo) {
           // 复用现有答题记录
           this.paperInfoId = unsubmittedPaperInfo.id
+          
+          // 修复答题时间异常：如果是恢复答题，重新调用 startExam 以重置 start_time 为当前时间
+          // 避免出现 "19小时" 这种由于跨天/挂机导致的异常时长
+          console.log(`🔄 [mounted] 恢复未提交的答题记录 ${this.paperInfoId}，重置计时器`)
+          ipcRenderer.invoke('answer:startExam', {
+            paperId: this.paperId,
+            appUserId: userId
+          }).catch(err => console.warn('重置答题计时器失败:', err))
           localStorage.setItem('currentPaperInfoId', this.paperInfoId.toString())
           console.log('✓ 复用现有答题记录，paperInfoId:', this.paperInfoId)
         } else {
@@ -451,69 +665,49 @@ export default {
 
     async loadStudentInfo() {
       try {
-        // 首先从 localStorage 获取 userInfo（完全离线可用）
+        // 首先从 localStorage 获取 userInfo
         const userInfoStr = localStorage.getItem('userInfo')
         let userInfo = null
         if (userInfoStr) {
           userInfo = JSON.parse(userInfoStr)
-          const user = userInfo.user || {}
-          const archive = userInfo.archive || {}
-          
-          // 优先使用新字段 student_name（学员姓名）和 student_account（学号）
-          // 注意：student_name 是姓名，student_account 是学号
-          this.studentName = String(archive.student_name || archive.studentName || archive.name || user.nickName || '未知')
-          this.studentId = String(archive.student_account || archive.studentAccount || archive.account || user.userName || '未知')
-          this.seatNumber = String(archive.seat_number || archive.seatNumber || '')
-          this.avatarNumber = archive.avatar_number || archive.avatarNumber || null
-          
-          console.log('✓ 从 localStorage 获取学生信息:', { 
-            name: this.studentName, 
-            id: this.studentId, 
-            seat: this.seatNumber 
-          })
         }
 
-        // 如果座位号等信息缺失，尝试从本地数据库获取学员档案（完全离线可用）
-        if ((!this.seatNumber || !this.studentName || this.studentName === '未知') && userInfo) {
+        // 优先从本地数据库获取学员档案（student_name 字段是真正的学员姓名）
+        if (userInfo) {
           try {
             const userId = userInfo.user?.userId
             const account = userInfo.user?.userName
+            let dbArchive = null
             
             if (userId) {
-              const archive = await ipcRenderer.invoke('archive:getByUserId', userId)
-              if (archive) {
-                // 补充缺失的信息（优先使用 student_name 字段）
-                if (!this.studentName || this.studentName === '未知') {
-                  this.studentName = String(archive.student_name || archive.studentName || archive.name || this.studentName)
-                }
-                if (!this.studentId || this.studentId === '未知') {
-                  this.studentId = String(archive.student_account || archive.studentAccount || archive.account || this.studentId)
-                }
-                if (!this.seatNumber) {
-                  this.seatNumber = String(archive.seat_number || archive.seatNumber || '')
-                }
-                console.log('✓ 从本地数据库补充学生信息:', { name: this.studentName, id: this.studentId, seat: this.seatNumber })
-              }
-            } else if (account) {
-              const archive = await ipcRenderer.invoke('archive:getByAccount', account)
-              if (archive) {
-                // 补充缺失的信息（优先使用 student_name 字段）
-                if (!this.studentName || this.studentName === '未知') {
-                  this.studentName = String(archive.student_name || archive.studentName || archive.name || this.studentName)
-                }
-                if (!this.studentId || this.studentId === '未知') {
-                  this.studentId = String(archive.student_account || archive.studentAccount || archive.account || this.studentId)
-                }
-                if (!this.seatNumber) {
-                  this.seatNumber = String(archive.seat_number || archive.seatNumber || '')
-                }
-                console.log('✓ 从本地数据库补充学生信息:', { name: this.studentName, id: this.studentId, seat: this.seatNumber })
-              }
+              dbArchive = await ipcRenderer.invoke('archive:getByUserId', userId)
+            }
+            if (!dbArchive && account) {
+              dbArchive = await ipcRenderer.invoke('archive:getByAccount', account)
+            }
+            
+            if (dbArchive) {
+              // 从数据库获取学员信息（student_name 是姓名，student_account 是学号）
+              this.studentName = String(dbArchive.student_name || dbArchive.studentName || '')
+              this.studentId = String(dbArchive.student_account || dbArchive.studentAccount || account || '')
+              this.seatNumber = String(dbArchive.seat_number || dbArchive.seatNumber || '')
+              this.avatarNumber = dbArchive.avatar_number || dbArchive.avatarNumber || null
+              console.log('✓ 从本地数据库获取学生信息:', { name: this.studentName, id: this.studentId, seat: this.seatNumber })
             }
           } catch (error) {
-            console.warn('从本地数据库获取学员档案失败（不影响离线使用）:', error)
-            // 不影响主流程，继续使用 localStorage 中的信息
+            console.warn('从本地数据库获取学员档案失败:', error)
           }
+        }
+
+        // 如果数据库没有数据，使用 localStorage 作为 fallback
+        if (!this.studentName && userInfo) {
+          const user = userInfo.user || {}
+          const archive = userInfo.archive || {}
+          this.studentName = String(archive.student_name || archive.studentName || '未知')
+          this.studentId = String(archive.student_account || archive.studentAccount || user.userName || '未知')
+          this.seatNumber = String(archive.seat_number || archive.seatNumber || '')
+          this.avatarNumber = archive.avatar_number || archive.avatarNumber || null
+          console.log('✓ 从 localStorage 获取学生信息:', { name: this.studentName, id: this.studentId, seat: this.seatNumber })
         }
       } catch (error) {
         console.error('加载学生信息失败:', error)
@@ -590,7 +784,8 @@ export default {
             volume_code: s.volumeCode || s.volume_code || '',
             section_order: s.sectionOrder || s.section_order || 0,
             audio_play_count: s.audioPlayCount || s.audio_play_count || 1,
-            answer_time: s.answerTime || s.answer_time || 5
+            answer_time: s.answerTime || s.answer_time || 5,
+            instruction_text: s.instructionText || s.instruction_text || ''
           }))
           console.log('📦 [loadSectionsAndQuestions] 从 manifest 获取大题:', allSections.length, '个')
         } else {
@@ -639,8 +834,8 @@ export default {
             // 生成题目序号（1, 2, 3, ...），而不是使用数据库中的 question_sort
             // 右侧显示的应该是连续的序号，表示这个大题有多少道题
             const questionNumbers = processedQuestions
-              .sort((a, b) => (a.question_sort || a.sort_order || 0) - (b.question_sort || b.sort_order || 0))
-              .map((q, index) => index + 1) // 使用连续序号 1, 2, 3, ...
+              .sort((a, b) => (a.id || 0) - (b.id || 0))
+              .map((q, index) => ({ no: index + 1, id: q.id })) // 使用对象存储序号和ID
             
             this.$set(this.sectionQuestionsMap, section.id, questionNumbers)
             console.log(`📦 [loadSectionsAndQuestions] 大题 ${section.id} 题号列表:`, questionNumbers)
@@ -664,18 +859,16 @@ export default {
 
     async loadAndPlaySectionAudio(section) {
       try {
-        console.log(`📦 [loadAndPlaySectionAudio] 开始加载大题音频，sectionId=${section.id}, sectionName=${section.section_name}`)
+        console.log(`📦 [loadAndPlaySectionAudio] 开始加载大题音频，sectionId=${section.id}, sectionName=${section.section_name}, Order=${section.section_order}`)
         
-        // 获取大题的题目音频播放次数和答题时间设置（用于后续题目播放）
+        // 获取大题的题目音频播放次数和答题时间设置
         this.questionAudioPlayCount = section.audio_play_count || section.audioPlayCount || 1
         this.answerTime = section.answer_time || section.answerTime || 5
-        console.log(`📦 [loadAndPlaySectionAudio] 题目音频播放次数: ${this.questionAudioPlayCount}, 答题时间: ${this.answerTime}秒`)
         
         // 获取试卷包数据
         const paperData = await ipcRenderer.invoke('paper:getPaperData', this.paperId)
         if (!paperData || !paperData.manifest) {
           console.warn('⚠️ [loadAndPlaySectionAudio] 无法加载试卷数据')
-          // 如果没有音频，直接跳到下一个
           this.playNextSectionAudio()
           return
         }
@@ -683,181 +876,120 @@ export default {
         const mediaDir = paperData.mediaDir || ''
         const manifest = paperData.manifest
         
-        // 从 manifest.sections 中查找对应的大题
-        // 优先使用 section.id 匹配，如果匹配不到，尝试使用 section_name 匹配
+        // 查找对应的大题
         let matchedSection = null
         if (manifest.sections && Array.isArray(manifest.sections)) {
           matchedSection = manifest.sections.find(s => {
-            // 尝试多种匹配方式
             return s.id === section.id || 
                    s.section_id === section.id ||
                    String(s.sectionName || s.section_name || '') === String(section.section_name || section.sectionName || '')
           })
         }
         
-        if (!matchedSection) {
-          console.warn(`⚠️ [loadAndPlaySectionAudio] 在 manifest 中找不到对应的大题，sectionId=${section.id}, sectionName=${section.section_name}`)
-          // 如果没有匹配的大题，等待1.5秒后跳到下一个
-          setTimeout(() => {
-            this.playNextSectionAudio()
-          }, 1500)
-          return
-        }
-        
-        // 从 manifest 中获取大题音频路径
-        // 优先使用 instructionAudioPath，如果没有则使用 instructionAudioUrl
-        const audioPath = matchedSection.instructionAudioPath || matchedSection.instruction_audio_path || ''
+        // 获取音频路径（允许为空，为空时尝试智能扫描）
+        const audioPath = matchedSection ? (matchedSection.instructionAudioPath || matchedSection.instruction_audio_path || '') : ''
         
         if (!audioPath) {
-          console.warn(`⚠️ [loadAndPlaySectionAudio] 大题 ${section.id} 没有音频文件路径，跳到下一个`)
-          // 如果没有音频，等待1.5秒后跳到下一个
-          setTimeout(() => {
-            this.playNextSectionAudio()
-          }, 1500)
-          return
+          console.warn(`⚠️ [loadAndPlaySectionAudio] Manifest中未找到音频路径，将尝试智能扫描本地目录`)
         }
         
-        console.log(`📦 [loadAndPlaySectionAudio] 开始加载大题音频`)
-        
-        // 只处理本地路径，忽略远程URL
+        // 1. 尝试通过路径加载 (如果路径存在)
         let audioFilePath = null
-        
-        // 如果路径以 media/ 开头，说明是完整的相对路径
-        if (audioPath.startsWith('media/')) {
-          // 尝试从 mediaDir 解析
-          const relativePath = audioPath.replace(/^media\//, '')
-          audioFilePath = path.join(mediaDir, relativePath)
-          if (!fs.existsSync(audioFilePath)) {
-            // 如果不存在，尝试从 sections 目录查找
-            const fileName = path.basename(audioPath)
-            const sectionInstructionDir = path.join(mediaDir, 'sections')
-            if (fs.existsSync(sectionInstructionDir)) {
-              const sectionInstructionFilePath = path.join(sectionInstructionDir, fileName)
-              if (fs.existsSync(sectionInstructionFilePath)) {
-                audioFilePath = sectionInstructionFilePath
-                console.log(`📦 [loadAndPlaySectionAudio] 从 sections 目录找到音频文件`)
-              }
-            }
+        if (audioPath) {
+          // 处理 media/ 和 sections/ 前缀
+          if (audioPath.startsWith('media/')) {
+            const relativePath = audioPath.replace(/^media\//, '')
+            audioFilePath = path.join(mediaDir, relativePath)
+          } else if (audioPath.startsWith('sections/')) {
+            audioFilePath = path.join(mediaDir, 'sections', path.basename(audioPath))
           } else {
-            console.log(`📦 [loadAndPlaySectionAudio] 从 media/ 路径找到音频文件`)
+             audioFilePath = path.join(mediaDir, 'sections', path.basename(audioPath))
           }
-        } else if (audioPath.startsWith('sections/')) {
-          // 如果路径以 sections/ 开头，直接从 sections 目录查找
-          const fileName = path.basename(audioPath)
-          const sectionInstructionDir = path.join(mediaDir, 'sections')
-          if (fs.existsSync(sectionInstructionDir)) {
-            const sectionInstructionFilePath = path.join(sectionInstructionDir, fileName)
-            if (fs.existsSync(sectionInstructionFilePath)) {
-              audioFilePath = sectionInstructionFilePath
-              console.log(`📦 [loadAndPlaySectionAudio] 从 sections/ 路径找到音频文件`)
-            }
-          }
-        } else {
-          // 如果只是文件名，从 sections/ 目录查找
-          const sectionInstructionDir = path.join(mediaDir, 'sections')
-          const fileName = path.basename(audioPath)
-          if (fs.existsSync(sectionInstructionDir)) {
-            const sectionInstructionFilePath = path.join(sectionInstructionDir, fileName)
-            if (fs.existsSync(sectionInstructionFilePath)) {
-              audioFilePath = sectionInstructionFilePath
-              console.log(`📦 [loadAndPlaySectionAudio] 从文件名找到音频文件`)
-            }
+          
+          if (audioFilePath && fs.existsSync(audioFilePath)) {
+             console.log(`📦 [loadAndPlaySectionAudio] 通过Manifest路径找到文件: ${audioFilePath}`)
+          } else {
+             console.warn(`⚠️ [loadAndPlaySectionAudio] Manifest路径指向的文件不存在: ${audioFilePath || audioPath}, 转为扫描`)
+             audioFilePath = null // 置空以便后续扫描
           }
         }
-        
-        // 加载音频文件的辅助函数（完全参考 Broadcast.vue 和 Notes.vue 的实现）
-        const loadAudioFile = (filePath) => {
-          try {
-            if (!fs.existsSync(filePath)) {
-              console.warn(`⚠️ [loadAndPlaySectionAudio] 音频文件不存在: ${filePath}`)
-              return false
-            }
-            
-            // 获取文件大小用于日志
-            const stats = fs.statSync(filePath)
-            const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2)
-            console.log(`📦 [loadAndPlaySectionAudio] 音频文件大小: ${fileSizeMB}MB`)
-            
-            // 先尝试读取文件并转成 base64 data URL
-            try {
-              const fileBuffer = fs.readFileSync(filePath)
-              const ext = path.extname(filePath).toLowerCase()
-              let mimeType = 'audio/mpeg'
-              if (ext === '.wav') mimeType = 'audio/wav'
-              else if (ext === '.m4a' || ext === '.aac') mimeType = 'audio/mp4'
-              else if (ext === '.ogg') mimeType = 'audio/ogg'
-              
-              const base64 = fileBuffer.toString('base64')
-              const dataUrl = `data:${mimeType};base64,${base64}`
-              this.currentSectionAudioPath = dataUrl
-              return true
-            } catch (error) {
-              console.warn(`⚠️ [loadAndPlaySectionAudio] 读取文件失败，尝试 file:// URL: ${error.message}`)
-              // 降级方案：使用 file:// URL
-              this.currentSectionAudioPath = pathToFileURL(filePath).href
-              console.log(`✓ [loadAndPlaySectionAudio] 大题音频加载成功（file:// URL）`)
-              return true
-            }
-          } catch (error) {
-            console.error(`❌ [loadAndPlaySectionAudio] 加载音频文件失败: ${error.message}`)
-            return false
-          }
+
+        // 2. 如果Manifest路径失效或为空，执行智能扫描
+        if (!audioFilePath) {
+           const sectionInstructionDir = path.join(mediaDir, 'sections')
+           if (fs.existsSync(sectionInstructionDir)) {
+             const files = fs.readdirSync(sectionInstructionDir)
+               .filter(file => /\.(mp3|wav|m4a|aac|ogg)$/i.test(file))
+               .sort() // 字母顺序排序: intro_01, intro_02...
+
+             if (files.length > 0) {
+                // 策略A: 尝试通过 section_order 匹配文件名 (如 order=1 匹配 "01")
+                // 补零处理: 1 -> "01", 1 -> "1"
+                const order = section.section_order || (this.currentSectionIndex + 1);
+                const orderStr = String(order)
+                const orderPad = orderStr.padStart(2, '0')
+                
+                // 查找文件名中包含 _01_ 或 _1_ 或 01.mp3 的文件
+                let match = files.find(f => f.includes(`_${orderPad}_`) || f.includes(`_${orderStr}_`) || f.includes(`intro_${orderPad}`));
+                
+                if (match) {
+                   audioFilePath = path.join(sectionInstructionDir, match)
+                   console.log(`📦 [loadAndPlaySectionAudio] 智能匹配(策略A-序号): Order=${order} -> ${match}`)
+                } else {
+                   // 策略B: 降级为按索引匹配 (当前是第几个大题，就用第几个文件)
+                   // 注意：这假设 sortedFiles 和 currentVolumeSections 顺序一致
+                   if (this.currentSectionIndex < files.length) {
+                      const fileByIndex = files[this.currentSectionIndex]
+                      audioFilePath = path.join(sectionInstructionDir, fileByIndex)
+                      console.log(`📦 [loadAndPlaySectionAudio] 智能匹配(策略B-索引): Index=${this.currentSectionIndex} -> ${fileByIndex}`)
+                   } else {
+                      // 策略C: 无论如何取第一个 (保底，但可能错误)
+                      audioFilePath = path.join(sectionInstructionDir, files[0])
+                      console.warn(`⚠️ [loadAndPlaySectionAudio] 智能匹配(策略C-首个): 无法精确匹配，使用第一个文件 -> ${files[0]}`)
+                   }
+                }
+             }
+           }
         }
-        
-        // 扫描目录查找音频文件的辅助函数
-        const scanDirectoryForAudio = () => {
-          let foundAudioPath = null
-          const sectionInstructionDir = path.join(mediaDir, 'sections')
-          if (fs.existsSync(sectionInstructionDir)) {
-            const files = fs.readdirSync(sectionInstructionDir)
-            const audioFile = files.find(file => /\.(mp3|wav|m4a|aac|ogg)$/i.test(file))
-            if (audioFile) {
-              foundAudioPath = path.join(sectionInstructionDir, audioFile)
-            }
-          }
-          return foundAudioPath
-        }
-        
-        // 如果找到了音频文件路径，直接加载
+
+        // 3. 执行加载
         if (audioFilePath && fs.existsSync(audioFilePath)) {
-          if (loadAudioFile(audioFilePath)) {
-            // 加载成功后，等待音频就绪后播放
-            this.$nextTick(() => {
-              this.playSectionAudio()
-            })
-          } else {
-            // 加载失败，跳到下一个
-            setTimeout(() => {
-              this.playNextSectionAudio()
-            }, 1500)
-          }
+           // 加载逻辑
+           const success = await this.loadAudioFileContent(audioFilePath)
+           if (success) {
+              this.$nextTick(() => { this.playSectionAudio() })
+           } else {
+              setTimeout(() => { this.playNextSectionAudio() }, 500)
+           }
         } else {
-          // 文件不存在或路径不存在，尝试扫描目录
-          const foundAudioPath = scanDirectoryForAudio()
-          if (foundAudioPath) {
-            if (loadAudioFile(foundAudioPath)) {
-              this.$nextTick(() => {
-                this.playSectionAudio()
-              })
-            } else {
-              setTimeout(() => {
-                this.playNextSectionAudio()
-              }, 1500)
-            }
-          } else {
-            console.warn(`⚠️ [loadAndPlaySectionAudio] 大题音频不存在，跳到下一个`)
-            setTimeout(() => {
-              this.playNextSectionAudio()
-            }, 1500)
-          }
+           console.warn(`❌ [loadAndPlaySectionAudio] 最终无法找到任何可用音频，跳过`)
+           setTimeout(() => { this.playNextSectionAudio() }, 500)
         }
+
       } catch (error) {
-        console.error('❌ [loadAndPlaySectionAudio] 加载大题音频失败:', error)
-        // 出错后也跳到下一个
-        setTimeout(() => {
-          this.playNextSectionAudio()
-        }, 1500)
+        console.error('❌ [loadAndPlaySectionAudio] 流程异常:', error)
+        setTimeout(() => { this.playNextSectionAudio() }, 500)
       }
+    },
+
+    // 提取加载文件内容的通用方法
+    async loadAudioFileContent(filePath) {
+        try {
+            const fileBuffer = fs.readFileSync(filePath)
+            const ext = path.extname(filePath).toLowerCase()
+            let mimeType = 'audio/mpeg'
+            if (ext === '.wav') mimeType = 'audio/wav'
+            else if (ext === '.m4a' || ext === '.aac') mimeType = 'audio/mp4'
+            else if (ext === '.ogg') mimeType = 'audio/ogg'
+            
+            const base64 = fileBuffer.toString('base64')
+            this.currentSectionAudioPath = `data:${mimeType};base64,${base64}`
+            return true
+        } catch(e) {
+            console.warn(`读取文件失败转用file协议: ${e.message}`)
+            this.currentSectionAudioPath = pathToFileURL(filePath).href
+            return true
+        }
     },
 
     playSectionAudio() {
@@ -865,7 +997,7 @@ export default {
         console.warn('⚠️ [playSectionAudio] 没有大题音频，跳到下一个')
         setTimeout(() => {
           this.playNextSectionAudio()
-        }, 1500)
+        }, 500)
         return
       }
 
@@ -874,7 +1006,7 @@ export default {
         console.warn('⚠️ [playSectionAudio] 音频元素不存在，跳到下一个')
         setTimeout(() => {
           this.playNextSectionAudio()
-        }, 1500)
+        }, 500)
         return
       }
 
@@ -924,7 +1056,7 @@ export default {
           }
           this.sectionAudioTimer = setTimeout(() => {
             this.playNextSectionAudio()
-          }, 1500)
+          }, 500)
         })
       }
 
@@ -950,14 +1082,24 @@ export default {
             }
             this.sectionAudioTimer = setTimeout(() => {
               this.playNextSectionAudio()
-            }, 1500)
+            }, 500)
           }
         }, 10000)
       }
     },
 
     playNextSectionAudio() {
-      // 防止重复调用
+      // 单例检查：只允许活跃实例执行
+      if (activeInstanceId !== this._instanceId) {
+          console.warn(`⚠️ [playNextSectionAudio] 非活跃实例，跳过`)
+          return
+      }
+      
+      // 🔥 调试：打印当前状态
+      console.log(`📊 [playNextSectionAudio] 当前状态: showQuestions=${this.showQuestions}, loading=${this.loading}, sectionAudioPlaying=${this.sectionAudioPlaying}, sectionIndex=${this.currentSectionIndex}`)
+      
+      // 如果题目已加载或正在加载，说明这是当前大题的延续，不需要重新加载
+      // 但如果是新大题，showQuestions 应该已经被重置为 false
       if (this.showQuestions || this.loading) {
         console.log('⚠️ [playNextSectionAudio] 题目已加载或正在加载，跳过')
         return
@@ -969,44 +1111,36 @@ export default {
         this.sectionAudioTimer = null
       }
       
-      // 停止当前音频（先清空路径，再清空 src，避免触发错误事件）
-      this.currentSectionAudioPath = '' // 先清空路径，这样 error 事件会被忽略
+      // 停止当前音频
+      this.currentSectionAudioPath = ''
       const audio = this.$refs.sectionAudioPlayer
       if (audio) {
         audio.pause()
         audio.src = ''
       }
       this.sectionAudioPlaying = false
-      // 停止音频可视化
       this.stopAudioVisualization()
       
-      // 移动到下一个大题
-      this.currentSectionIndex++
+      // 修改交互逻辑：大题导语播放完成后，直接进入该大题的作答（加载题目）
+      // 而不是播放下一个大题的导语
+      console.log(`✓ [playNextSectionAudio] 大题音频播放完成（或跳过），开始加载题目: sectionIndex=${this.currentSectionIndex}`)
       
-      if (this.currentSectionIndex < this.currentVolumeSections.length) {
-        // 还有下一个大题，加载并播放
-        const nextSection = this.currentVolumeSections[this.currentSectionIndex]
-        console.log(`📦 [playNextSectionAudio] 播放下一个大题音频，sectionIndex=${this.currentSectionIndex}, sectionId=${nextSection.id}`)
-        this.loadAndPlaySectionAudio(nextSection)
-      } else {
-        // 所有大题音频播放完成，等待1.5秒后加载题目
-        console.log('✓ [playNextSectionAudio] 所有大题音频播放完成，等待1.5秒后加载题目')
-        
-        // 重置 currentSectionIndex 为 0，准备加载第一个大题的题目
-        this.currentSectionIndex = 0
-        console.log(`📦 [playNextSectionAudio] 重置 currentSectionIndex 为 0，准备加载第一个大题的题目`)
-        
-        // 使用一次性定时器，防止重复调用
-        if (!this.questionsLoadTimer) {
-          this.questionsLoadTimer = setTimeout(() => {
-            this.questionsLoadTimer = null
-            this.loadAllQuestions()
-          }, 1500)
-        }
+      // 使用一次性定时器，防止重复调用
+      if (!this.questionsLoadTimer) {
+        this.questionsLoadTimer = setTimeout(() => {
+          this.questionsLoadTimer = null
+          this.loadAllQuestions()
+        }, 500) // 缩短等待时间，提升流畅度
       }
     },
 
     async loadAllQuestions() {
+      // 单例检查：只允许活跃实例执行
+      if (activeInstanceId !== this._instanceId) {
+          console.warn(`⚠️ [loadAllQuestions] 非活跃实例，跳过`)
+          return
+      }
+      
       // 防止重复调用
       if (this.showQuestions || this.loading) {
         console.log('⚠️ [loadAllQuestions] 题目已加载或正在加载，跳过重复调用')
@@ -1032,17 +1166,56 @@ export default {
         try {
           const questions = await ipcRenderer.invoke('paper:getQuestions', this.paperId, currentSection.id)
           console.log(`📦 [loadAllQuestions] 大题 ${currentSection.id} 的题目:`, questions.length, '个')
+
+          // 加载题目组信息
+          const groups = await ipcRenderer.invoke('paper:getQuestionGroups', this.paperId, currentSection.id) || []
+          this.questionGroups = groups.map(g => {
+            let ids = []
+            try {
+              if (g.selected_question_ids || g.selectedQuestionIds) {
+                const s = g.selected_question_ids || g.selectedQuestionIds
+                ids = JSON.parse(typeof s === 'string' ? s : JSON.stringify(s))
+                // 可能是 "[1, 2]" 字符串，也可能是数组
+                if (typeof ids === 'string') {
+                   ids = ids.replace('[', '').replace(']', '').split(',').map(i => Number(i.trim()))
+                }
+              }
+            } catch (e) { console.warn('解析题目组ID失败', e) }
+            return {
+              ...g,
+              id: g.id || g.questionGroupId || g.question_group_id, // 确保ID存在
+              questionIds: Array.isArray(ids) ? ids : []
+            }
+          })
+          console.log(`📦 [loadAllQuestions] 加载到 ${this.questionGroups.length} 个题目组`)
+
+          // 将题目与题目组关联
+          questions.forEach(q => {
+             const qId = q.id || q.question_id || q.questionId
+             const group = this.questionGroups.find(g => g.questionIds.includes(qId) || g.questionIds.includes(Number(qId)))
+             if (group) {
+               q.group = group
+             }
+          })
           
           // 处理题目数据的文本字段
           const processedQuestions = processTextFields(questions)
           
           // 按 question_sort 或 sort_order 排序
           const sortedQuestions = processedQuestions.sort((a, b) => {
-            return (a.question_sort || a.sort_order || 0) - (b.question_sort || b.sort_order || 0)
+            return (a.id || 0) - (b.id || 0)
           })
           
+          // 过滤无效题目
+          // 过滤无效题目 (Must have ID)
+          const validQuestions = sortedQuestions.filter(q => q && (q.id || q.questionId || q.question_id))
+          console.log(`📦 [loadAllQuestions] 有效题目数量: ${validQuestions.length} (原始: ${sortedQuestions.length})`)
+          if (validQuestions.length > 0) {
+             console.log(`📦 [loadAllQuestions] 第1题示例: ID=${validQuestions[0].id}, Group=${validQuestions[0].group ? 'Yes' : 'No'}`)
+          }
+
           // 添加到列表
-          allQuestionsList.push(...sortedQuestions)
+          allQuestionsList.push(...validQuestions)
         } catch (error) {
           console.error(`获取大题 ${currentSection.id} 的题目失败:`, error)
         }
@@ -1050,8 +1223,9 @@ export default {
         console.log(`✓ [loadAllQuestions] 共加载 ${allQuestionsList.length} 个题目`)
         
         if (allQuestionsList.length === 0) {
-          console.warn('⚠️ [loadAllQuestions] 没有题目可显示')
+          console.warn('⚠️ [loadAllQuestions] 没有题目可显示，自动跳到下一个')
           this.loading = false
+          this.handleSectionComplete()
           return
         }
         
@@ -1258,6 +1432,13 @@ export default {
         console.log('✓ [onSectionAudioEnded] 已清除定时器')
       }
       
+      // 🔥 关键修复：大题音频播放完成后，强制重置状态
+      // 这确保即使从上一个大题遗留了 showQuestions=true 的状态，也能正确加载新大题的题目
+      console.log(`📊 [onSectionAudioEnded] 重置前状态: showQuestions=${this.showQuestions}, loading=${this.loading}`)
+      this.showQuestions = false
+      this.loading = false
+      console.log(`📊 [onSectionAudioEnded] 重置后状态: showQuestions=${this.showQuestions}, loading=${this.loading}`)
+      
       // 大题音频只播放1次，播放完成后立即跳到下一个大题或加载题目
       console.log('✓ [onSectionAudioEnded] 大题音频播放完成，立即继续...')
       this.playNextSectionAudio()
@@ -1297,7 +1478,7 @@ export default {
       // 播放错误也等待1.5秒后跳到下一个
       this.sectionAudioTimer = setTimeout(() => {
         this.playNextSectionAudio()
-      }, 1500)
+      }, 500)
     },
 
     // ==================== 题目音频播放和答题计时相关方法 ====================
@@ -1306,6 +1487,12 @@ export default {
      * 播放当前题目的音频
      */
     async playCurrentQuestionAudio() {
+      // 单例检查：只允许活跃实例执行
+      if (activeInstanceId !== this._instanceId) {
+          console.warn(`⚠️ [playCurrentQuestionAudio] 非活跃实例，跳过`)
+          return
+      }
+      
       // 防重复调用：如果正在执行播放逻辑，直接返回
       if (this.isPlayingQuestionAudio) {
         console.warn(`⚠️ [playCurrentQuestionAudio] 正在执行播放逻辑，跳过重复调用，当前题目索引=${this.currentQuestionIndex + 1}`)
@@ -1314,7 +1501,27 @@ export default {
       
       const question = this.allQuestions[this.currentQuestionIndex]
       if (!question) {
-        console.warn(`⚠️ [playCurrentQuestionAudio] 当前题目不存在，索引=${this.currentQuestionIndex}`)
+        console.error(`❌ [playCurrentQuestionAudio] 当前题目不存在(Index=${this.currentQuestionIndex})，停止播放逻辑，不启动倒计时`)
+        // 重置状态，避免卡死
+        this.isPlayingQuestionAudio = false
+        return
+      }
+
+      // 1. 检查是否属于题目组
+      if (this.isInQuestionGroup) {
+        const group = this.currentQuestionGroup
+        // 如果该题目组有音频，且尚未播放过
+        if ((group.audioUrl || group.audioPath || group.audio_url || group.audio_path) && !this.playedGroupAudios.has(group.id)) {
+           console.log(`🎵 [playCurrentQuestionAudio] 检测到题目组音频，优先播放题目组音频: ${group.group_name}`)
+           this.playGroupAudio(group)
+           return
+        }
+        // 如果题目组音频已播放，或没有音频，则按照"同时作答"逻辑，直接开始倒计时
+        // 注意：题目组模式下，通常不个别播放题目音频，而是播放完组音频后所有题目一起答
+        // 除非题目本身有音频（目前假设优先组音频，组音频播完进入答题）
+        
+        // 重置标志
+        this.isPlayingQuestionAudio = false
         this.startAnswerCountdown()
         return
       }
@@ -1401,6 +1608,120 @@ export default {
           this.startAnswerCountdown()
         }
       }, 100)
+    },
+
+    /**
+     * 播放题目组音频
+     */
+    async playGroupAudio(group) {
+        try {
+            const audioPath = group.audioPath || group.audio_path || group.audioUrl || group.audio_url
+            if (!audioPath) {
+                console.warn('题目组没有音频路径')
+                this.playedGroupAudios.add(group.id)
+                this.isPlayingQuestionAudio = false
+                this.startAnswerCountdown()
+                return
+            }
+
+            // 获取试卷包数据以解析路径
+            const paperData = await ipcRenderer.invoke('paper:getPaperData', this.paperId)
+            const mediaDir = paperData?.mediaDir || ''
+            
+            let finalPath = ''
+            // 简单路径处理逻辑 (类似 getQuestionAudioFilePath)
+            if (audioPath.startsWith('http')) {
+               finalPath = audioPath
+            } else {
+               // 尝试本地路径
+               const possiblePath = path.join(mediaDir, audioPath)
+               if (fs.existsSync(possiblePath)) {
+                   finalPath = pathToFileURL(possiblePath).href
+               } else {
+                   // 尝试拼接
+                   const p2 = path.join(mediaDir, 'sections', audioPath) // 假设在 sections 目录下
+                   if (fs.existsSync(p2)) finalPath = pathToFileURL(p2).href
+               }
+            }
+
+            if (!finalPath) {
+                 console.warn('无法解析题目组音频路径:', audioPath)
+                 this.playedGroupAudios.add(group.id)
+                 this.isPlayingQuestionAudio = false
+                 this.startAnswerCountdown()
+                 return
+            }
+
+            this.groupAudioPath = finalPath
+            console.log(`🎵 [playGroupAudio] 播放题目组音频: ${finalPath}`)
+            
+            this.$nextTick(() => {
+                const audio = this.$refs.groupAudioPlayer
+                if (audio) {
+                    audio.volume = this.volume / 100
+                    audio.play().then(() => {
+                        this.groupAudioPlaying = true
+                        this.initAudioVisualization(audio)
+                    }).catch(e => {
+                        console.error('播放题目组音频失败', e)
+                        this.onGroupAudioError()
+                    })
+                } else {
+                    this.onGroupAudioError()
+                }
+            })
+
+        } catch (e) {
+            console.error('准备题目组音频失败', e)
+            this.onGroupAudioError()
+        }
+    },
+
+    onGroupAudioEnded() {
+        // 🔥 如果没有设置题目组音频路径，忽略这个事件
+        if (!this.groupAudioPath) {
+            return
+        }
+        
+        console.log('✓ [onGroupAudioEnded] 题目组音频播放结束')
+        this.groupAudioPlaying = false
+        if (this.currentQuestionGroup) {
+            this.playedGroupAudios.add(this.currentQuestionGroup.id)
+        }
+        // 音频结束后，开始答题倒计时
+        this.isPlayingQuestionAudio = false // 解锁
+        
+        // 🔥 安全检查：只有在题目已显示且大题音频未播放时才启动倒计时
+        if (this.showQuestions && !this.sectionAudioPlaying && this.allQuestions?.length > 0) {
+            this.startAnswerCountdown()
+        }
+    },
+
+    onGroupAudioError() {
+        // 🔥 关键修复：如果没有设置题目组音频路径，忽略这个错误事件
+        // 因为空的 <audio src=""> 会自动触发 error 事件
+        if (!this.groupAudioPath) {
+            console.log('⚠️ [onGroupAudioError] 忽略空音频路径的错误事件')
+            return
+        }
+        
+        console.warn('⚠️ [onGroupAudioError] 题目组音频播放出错，跳过')
+        this.groupAudioPlaying = false
+        if (this.currentQuestionGroup) {
+            this.playedGroupAudios.add(this.currentQuestionGroup.id)
+        }
+        this.isPlayingQuestionAudio = false
+        
+        // 🔥 安全检查：只有在题目已显示且大题音频未播放时才启动倒计时
+        if (this.showQuestions && !this.sectionAudioPlaying && this.allQuestions?.length > 0) {
+            this.startAnswerCountdown()
+        } else {
+            console.log('⚠️ [onGroupAudioError] 条件不满足，跳过启动倒计时:', {
+                showQuestions: this.showQuestions,
+                sectionAudioPlaying: this.sectionAudioPlaying,
+                allQuestionsLength: this.allQuestions?.length
+            })
+        }
     },
     
     /**
@@ -1634,7 +1955,7 @@ export default {
           // 备用机制：设置定时器，确保即使 ended 事件不触发也能继续
           // 时长 + 2秒缓冲
           if (audio.duration && audio.duration > 0) {
-            const fallbackTimeout = (audio.duration + 2) * 1000
+            const fallbackTimeout = (audio.duration + 0.5) * 1000
             console.log(`✓ [playQuestionAudio] 设置备用定时器: ${fallbackTimeout}ms`)
             if (this.questionAudioTimer) {
               clearTimeout(this.questionAudioTimer)
@@ -1728,7 +2049,7 @@ export default {
         console.log(`✓ [onQuestionAudioEnded] 需要重复播放，等待1秒后播放第 ${this.questionAudioPlayedCount + 1} 遍`)
         this.questionAudioTimer = setTimeout(() => {
           this.replayQuestionAudio()
-        }, 1000)
+        }, 500)
       } else {
         // 播放次数已满，重置标志并开始答题计时
         console.log('✓ [onQuestionAudioEnded] 音频播放完成，开始答题计时')
@@ -1757,6 +2078,41 @@ export default {
      * 开始答题倒计时
      */
     startAnswerCountdown() {
+      // 🔥 调试：打印调用栈，找出是谁在调用这个函数
+      console.log('⏱️ [startAnswerCountdown] 被调用，调用栈:', new Error().stack.split('\n').slice(1, 4).join('\n'))
+      console.log('⏱️ [startAnswerCountdown] 当前状态:', {
+        sectionAudioPlaying: this.sectionAudioPlaying,
+        showQuestions: this.showQuestions,
+        allQuestionsLength: this.allQuestions?.length,
+        currentQuestionIndex: this.currentQuestionIndex,
+        instanceId: this._instanceId,
+        activeInstanceId: activeInstanceId
+      })
+      
+      // 单例检查：如果不是活跃实例，直接返回
+      if (activeInstanceId !== this._instanceId) {
+          console.warn(`⚠️ [startAnswerCountdown] 非活跃实例(${this._instanceId})，跳过`)
+          return
+      }
+      
+      // 🔥 严防：大题音频播放时绝不启动倒计时
+      if (this.sectionAudioPlaying) {
+          console.warn('⚠️ [startAnswerCountdown] 大题音频正在播放，跳过题目倒计时')
+          return
+      }
+      
+      // 🔥 新增：题目未显示时不启动倒计时
+      if (!this.showQuestions) {
+          console.warn('⚠️ [startAnswerCountdown] 题目未显示，跳过题目倒计时')
+          return
+      }
+      
+      // 🔥 新增：没有题目时不启动倒计时
+      if (!this.allQuestions || this.allQuestions.length === 0) {
+          console.warn('⚠️ [startAnswerCountdown] 没有题目，跳过题目倒计时')
+          return
+      }
+      
       // 清除之前的定时器
       if (this.answerCountdownTimer) {
         clearInterval(this.answerCountdownTimer)
@@ -1764,10 +2120,30 @@ export default {
       }
       
       this.answerCountdown = this.answerTime
+      
+      // 如果在题目组中，且题目组有独立的答题时间设置，优先使用
+      if (this.isInQuestionGroup && this.currentQuestionGroup) {
+          if (this.currentQuestionGroup.answerTime || this.currentQuestionGroup.answer_time) {
+              const groupTime = this.currentQuestionGroup.answerTime || this.currentQuestionGroup.answer_time
+              // 确保时间合理
+              if (groupTime > 0) {
+                  this.answerCountdown = groupTime
+              }
+          }
+      }
+
       console.log(`⏱️ [startAnswerCountdown] 开始答题倒计时: ${this.answerCountdown} 秒`)
       
       // 每秒更新倒计时
       this.answerCountdownTimer = setInterval(() => {
+        // 每次回调都检查是否仍为活跃实例
+        if (activeInstanceId !== this._instanceId) {
+            console.warn(`⚠️ [Timer] 非活跃实例，终止定时器`)
+            clearInterval(this.answerCountdownTimer)
+            this.answerCountdownTimer = null
+            return
+        }
+        
         this.answerCountdown--
         
         if (this.answerCountdown <= 0) {
@@ -1799,7 +2175,13 @@ export default {
         return []
       }
       
-      // 显示所有题目，包括已过期的题目
+      // 如果在题目组中，只显示当前题目组的题目（同时显示）
+      if (this.isInQuestionGroup) {
+          return this.currentGroupQuestions
+      }
+
+      // 如果是普通题目，显示所有（或者根据需要分页/切片）
+      // 根据用户之前的代码逻辑，似乎是显示所有（列表式）
       return this.allQuestions
     },
     
@@ -1807,7 +2189,22 @@ export default {
      * 获取题目在全局列表中的索引
      */
     getQuestionGlobalIndex(visibleIndex) {
-      // 现在显示所有题目，所以 visibleIndex 就是全局索引
+      // calculate the global index based on visibleIndex
+      if (this.isInQuestionGroup) {
+          // 在题目组模式下，visibleIndex 是相对于 currentGroupQuestions 的索引
+          // 需要找到该题目在 allQuestions 中的索引
+          // 假设题目ID是唯一的
+          const question = this.currentGroupQuestions[visibleIndex]
+          if (question) {
+              const globalIndex = this.allQuestions.findIndex(q => {
+                  const qId = q.id || q.questionId || q.question_id
+                  const targetId = question.id || question.questionId || question.question_id
+                  return qId === targetId
+              })
+              return globalIndex !== -1 ? globalIndex : visibleIndex
+          }
+      }
+      // 非分组模式下，显示的是 allQuestions，所以 visibleIndex == globalIndex
       return visibleIndex
     },
     
@@ -1818,17 +2215,13 @@ export default {
       this.$nextTick(() => {
         const currentElement = this.$refs.currentQuestionElement
         if (currentElement && currentElement[0]) {
-          // 使用 block: 'nearest' 避免过度滚动
-          // 或者手动计算滚动位置，留出头部空间
-          const container = document.querySelector('.question-content-wrapper')
-          if (container) {
-            const elementTop = currentElement[0].offsetTop
-            // 滚动到元素位置，但留出一点顶部空间（不要紧贴顶部）
-            container.scrollTo({
-              top: Math.max(0, elementTop - 10),
-              behavior: 'smooth'
-            })
-          }
+          // 使用 scrollIntoView({ block: 'nearest' }) 
+          // 仅在元素不可见时才滚动，解决"滑动频率太多"的问题
+          // 同时也能确保元素显示在可视区域内，不会被遮挡
+          currentElement[0].scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest'
+          })
         }
       })
     },
@@ -1837,22 +2230,75 @@ export default {
      * 答题时间结束，自动跳到下一题
      */
     async onAnswerTimeUp() {
-      console.log(`⏱️ [onAnswerTimeUp] 题目 ${this.currentQuestionIndex + 1} 答题时间结束`)
+      if (this.processingTimeUp) return
+      this.processingTimeUp = true
+      
+      try {
+        console.log(`⏱️ [onAnswerTimeUp] 答题时间结束`)
+
+      // 1. 处理题目组逻辑
+      if (this.isInQuestionGroup) {
+          const groupQs = this.currentGroupQuestions
+          console.log(`⏱️ [onAnswerTimeUp] 题目组作答结束，共 ${groupQs.length} 题`)
+          
+          for (const q of groupQs) {
+             const idx = this.allQuestions.findIndex(aq => aq.id === q.id)
+             if (idx > -1) {
+                 if (!this.expiredQuestionIndexes.includes(idx)) {
+                     this.expiredQuestionIndexes.push(idx)
+                 }
+                 // 保存未作答结果 (如果已作答，内部会跳过)
+                 await this.saveQuestionResultByIndex(idx)
+             }
+          }
+
+          // 停止音频
+          this.isPlayingQuestionAudio = false
+          this.groupAudioPlaying = false
+          if (this.$refs.groupAudioPlayer) this.$refs.groupAudioPlayer.pause()
+          
+          // 计算跳转
+          const lastQ = groupQs[groupQs.length - 1]
+          const lastIdx = this.allQuestions.findIndex(q => q.id === lastQ.id)
+          
+          if (lastIdx === -1) {
+             console.error('无法找到题目组最后一题索引')
+             return
+          }
+
+          const isLastQuestionOfSection = lastIdx >= this.allQuestions.length - 1 || 
+            (this.allQuestions[lastIdx + 1] && (this.allQuestions[lastIdx + 1].sectionId !== this.allQuestions[lastIdx].sectionId))
+             
+          if (isLastQuestionOfSection) {
+             console.log('✓ [onAnswerTimeUp] 题目组完成，进入下一大题')
+             this.loadNextSection()
+          } else {
+             console.log('✓ [onAnswerTimeUp] 题目组完成，进入下一题')
+             this.currentQuestionIndex = lastIdx + 1
+             this.scrollToCurrentQuestion()
+             this.loadQuestion(this.allQuestions[this.currentQuestionIndex])
+             setTimeout(() => {
+                this.playCurrentQuestionAudio()
+             }, 200)
+          }
+          return
+      }
+
+      // 2. 原有单题逻辑
+      console.log(`⏱️ [onAnswerTimeUp] 单题 ${this.currentQuestionIndex + 1} 结束`)
       
       // 将当前题目标记为已过期
       if (!this.expiredQuestionIndexes.includes(this.currentQuestionIndex)) {
         this.expiredQuestionIndexes.push(this.currentQuestionIndex)
-        console.log(`⏱️ [onAnswerTimeUp] 题目 ${this.currentQuestionIndex + 1} 已标记为过期`)
       }
       
-      // 自动保存当前题目的答题记录（无论是否作答）
-      await this.saveCurrentQuestionResult()
+      // 保存结果
+      await this.saveQuestionResultByIndex(this.currentQuestionIndex)
       
-      // 停止当前题目音频和所有相关定时器
+      // 停止音频
       this.questionAudioPath = ''
       this.questionAudioPlaying = false
-      this.isPlayingQuestionAudio = false // 重置播放标志
-      // 清除题目音频定时器
+      this.isPlayingQuestionAudio = false
       if (this.questionAudioTimer) {
         clearTimeout(this.questionAudioTimer)
         this.questionAudioTimer = null
@@ -1862,40 +2308,37 @@ export default {
         audio.pause()
         audio.src = ''
       }
-      // 停止音频可视化
       this.stopAudioVisualization()
       
       // 检查是否是当前大题的最后一题
       const currentQuestion = this.allQuestions[this.currentQuestionIndex]
+      if (!currentQuestion) {
+          console.error('当前题目丢失')
+          return
+      }
       const currentSectionId = currentQuestion.sectionId || currentQuestion.section_id
       
-      // 检查下一题是否属于同一个大题
       const isLastQuestionOfSection = this.currentQuestionIndex >= this.allQuestions.length - 1 ||
         (this.allQuestions[this.currentQuestionIndex + 1] && 
          (this.allQuestions[this.currentQuestionIndex + 1].sectionId || this.allQuestions[this.currentQuestionIndex + 1].section_id) !== currentSectionId)
       
-      console.log(`📦 [onAnswerTimeUp] 判断是否是最后一题: isLastQuestionOfSection=${isLastQuestionOfSection}, currentIndex=${this.currentQuestionIndex}, totalQuestions=${this.allQuestions.length}`)
-      console.log(`📦 [onAnswerTimeUp] 当前题目ID: ${currentQuestion.id}, sectionId: ${currentSectionId}`)
-      
       if (isLastQuestionOfSection) {
-        // 当前大题的最后一题答题结束，检查是否有下一个大题
-        console.log('✓ [onAnswerTimeUp] 当前大题答题完成，检查下一个大题')
         this.loadNextSection()
       } else {
-        // 跳到下一题（同一个大题内）
         this.currentQuestionIndex++
         const nextQuestion = this.allQuestions[this.currentQuestionIndex]
-        
-        // 滚动到当前题目
         this.scrollToCurrentQuestion()
         this.loadQuestion(nextQuestion)
-        console.log(`✓ [onAnswerTimeUp] 跳到题目 ${this.currentQuestionIndex + 1}, questionId=${nextQuestion?.id}`)
+        console.log(`✓ [onAnswerTimeUp] 跳到下一题 ${this.currentQuestionIndex + 1}`)
         
-        // 播放下一题音频（使用 setTimeout 确保状态已清理）
         setTimeout(() => {
-          console.log(`✓ [onAnswerTimeUp] setTimeout 触发，准备播放题目 ${this.currentQuestionIndex + 1} 的音频`)
           this.playCurrentQuestionAudio()
         }, 200)
+      }
+      } finally {
+        setTimeout(() => {
+            this.processingTimeUp = false
+        }, 500)
       }
     },
     
@@ -1924,7 +2367,7 @@ export default {
           // 等待1.5秒后播放下一个大题音频
           setTimeout(() => {
             this.loadAndPlaySectionAudio(nextSection)
-          }, 1500)
+          }, 500)
         } else {
           // 没有更多大题，当前卷别答题完成
           console.log('✓ [loadNextSection] 当前卷别所有大题答题完成')
@@ -1934,6 +2377,32 @@ export default {
         console.error('❌ [loadNextSection] 加载下一个大题失败:', error)
         this.goToVolumeComplete()
       }
+    },
+
+    /**
+     * 处理大题完成（当没有题目可显示时调用）
+     * 不依赖 currentQuestion，直接使用 currentSectionIndex
+     */
+    handleSectionComplete() {
+         console.log(`📦 [handleSectionComplete] 大题 ${this.currentSectionIndex} 无题目或已完成，尝试进入下一个`)
+         
+         if (this.currentSectionIndex < this.currentVolumeSections.length - 1) {
+            // 进入下一个大题
+            this.currentSectionIndex++
+            console.log(`📦 [handleSectionComplete] 自动进入下一个大题 index: ${this.currentSectionIndex}`)
+            
+            this.showQuestions = false
+            this.loading = true
+            this.allQuestions = [] 
+            
+            const nextSection = this.currentVolumeSections[this.currentSectionIndex]
+            setTimeout(() => {
+                this.loadAndPlaySectionAudio(nextSection) // 使用这一方法播放音频并触发后续流程
+            }, 500)
+         } else {
+             console.log('✓ [handleSectionComplete] 卷别所有大题完成')
+             this.goToVolumeComplete()
+         }
     },
     
     /**
@@ -1978,7 +2447,7 @@ export default {
       // 1.5秒后检查下一步
       setTimeout(() => {
         this.checkNextVolumeOrComplete()
-      }, 1500)
+      }, 500)
     },
     
     /**
@@ -2008,29 +2477,44 @@ export default {
             const nextVolumeCode = nextVolume.volumeCode || nextVolume.volume_code
             console.log(`✓ 找到下一个有效卷别: ${nextVolumeCode}`)
             
-            // 隐藏完成提示，跳转到下一卷别
+            // 隐藏完成提示
             this.showVolumeComplete = false
-            
-            // 检查是否有中场设置
-            const intermissions = await ipcRenderer.invoke('paper:getIntermissions', this.paperId)
-            const intermission = intermissions?.find(i => 
-              i.from_volume === this.currentVolumeCode && 
-              i.to_volume === nextVolumeCode
-            )
-            
+
+            // 优先使用 manifest 中的中场配置，其次 SQLite（paper_intermission）
+            console.log('🔍 [intermission-match] currentVolumeId:', this.currentVolumeId, 'currentVolumeCode:', this.currentVolumeCode)
+            console.log('🔍 [intermission-match] nextVolume:', {
+              id: nextVolume?.id,
+              code: nextVolumeCode,
+              name: nextVolume?.volumeName || nextVolume?.volume_name
+            })
+            const intermission = await this.findIntermissionConfig({ paperData, nextVolume, nextVolumeCode })
+            console.log('🔍 [intermission-match] matched intermission:', intermission)
+
             if (intermission) {
-              // 同步保存下一卷的 ID 和 Code，避免后续页面读取不一致
-              if (nextVolume?.id) {
+              // 命中中场配置，跳转到 /intermission 路由（保留新匹配逻辑）
+              const targetVolumeId = intermission.toVolumeId ?? intermission.to_volume_id ?? nextVolume?.id ?? null
+              const targetVolumeCode = intermission.toVolume ?? intermission.to_volume ?? nextVolumeCode
+              const fromParam = intermission.fromVolume ?? intermission.from_volume ?? this.currentVolumeCode
+              const toParam = intermission.toVolume ?? intermission.to_volume ?? targetVolumeCode
+              const fromVolumeIdParam = intermission.fromVolumeId ?? intermission.from_volume_id ?? this.currentVolumeId ?? null
+              const toVolumeIdParam = intermission.toVolumeId ?? intermission.to_volume_id ?? nextVolume?.id ?? null
+
+              if (targetVolumeId) {
+                localStorage.setItem('currentVolumeId', String(targetVolumeId))
+              } else if (nextVolume?.id) {
                 localStorage.setItem('currentVolumeId', String(nextVolume.id))
               }
-              localStorage.setItem('currentVolumeCode', nextVolumeCode)
+              localStorage.setItem('currentVolumeCode', targetVolumeCode)
+
               this.$router.push({
                 path: '/intermission',
                 query: {
                   paperId: this.paperId,
                   paperInfoId: this.paperInfoId,
-                  fromVolume: this.currentVolumeCode,
-                  toVolume: nextVolumeCode
+                  fromVolume: fromParam,
+                  toVolume: toParam,
+                  fromVolumeId: fromVolumeIdParam ? String(fromVolumeIdParam) : undefined,
+                  toVolumeId: toVolumeIdParam ? String(toVolumeIdParam) : undefined
                 }
               })
             } else {
@@ -2079,6 +2563,220 @@ export default {
         return false
       }
     },
+
+    /**
+     * 解析中场配置（优先 manifest.intermissions，再回退 SQLite）
+     */
+    async findIntermissionConfig({ paperData, nextVolume, nextVolumeCode }) {
+      const manifestIntermissions = paperData?.manifest?.intermissions || []
+      const norm = (v) => (v === undefined || v === null) ? '' : String(v).trim()
+      const volumes = paperData?.manifest?.volumes || []
+
+      const currentVolumeInfo = volumes.find(v => {
+        const vid = v.id || v.volumeId || v.volume_id
+        const vcode = norm(v.volumeCode || v.volume_code)
+        return (this.currentVolumeId && vid && Number(vid) === Number(this.currentVolumeId)) ||
+          (vcode && norm(this.currentVolumeCode) && vcode === norm(this.currentVolumeCode))
+      }) || null
+
+      const nextVolumeInfo = volumes.find(v => {
+        const vid = v.id || v.volumeId || v.volume_id
+        const vcode = norm(v.volumeCode || v.volume_code)
+        return (nextVolume?.id && vid && Number(vid) === Number(nextVolume.id)) ||
+          (vcode && norm(nextVolumeCode) && vcode === norm(nextVolumeCode))
+      }) || null
+
+      const currentCode = norm(currentVolumeInfo?.volumeCode || currentVolumeInfo?.volume_code || this.currentVolumeCode)
+      const currentName = norm(currentVolumeInfo?.volumeName || currentVolumeInfo?.volume_name)
+      const nextCode = norm(nextVolumeCode || nextVolumeInfo?.volumeCode || nextVolumeInfo?.volume_code)
+      const nextVolName = norm(nextVolumeInfo?.volumeName || nextVolumeInfo?.volume_name)
+
+      console.log('🔍 [intermission-match] manifest volumes:', volumes.map(v => ({
+        id: v.id || v.volumeId || v.volume_id,
+        code: v.volumeCode || v.volume_code,
+        name: v.volumeName || v.volume_name
+      })))
+      console.log('🔍 [intermission-match] manifest intermissions:', manifestIntermissions.map(i => ({
+        fromVolumeId: i.fromVolumeId ?? i.from_volume_id,
+        toVolumeId: i.toVolumeId ?? i.to_volume_id,
+        fromVolume: i.fromVolume ?? i.from_volume,
+        toVolume: i.toVolume ?? i.to_volume
+      })))
+      console.log('🔍 [intermission-match] currentVolume resolved:', {
+        id: this.currentVolumeId,
+        code: currentCode,
+        name: currentName
+      })
+      console.log('🔍 [intermission-match] nextVolume resolved:', {
+        id: nextVolume?.id || nextVolumeInfo?.id || nextVolumeInfo?.volumeId || nextVolumeInfo?.volume_id,
+        code: nextCode,
+        name: nextVolName
+      })
+
+      const tryMatch = (list) => {
+        if (!Array.isArray(list)) return null
+        return list.find(i => {
+          const fromId = i.fromVolumeId ?? i.from_volume_id ?? null
+          const toId = i.toVolumeId ?? i.to_volume_id ?? null
+          const fromCode = norm(i.fromVolume ?? i.from_volume)
+          const toCode = norm(i.toVolume ?? i.to_volume)
+          const matchFromId = fromId && this.currentVolumeId && Number(fromId) === Number(this.currentVolumeId)
+          const matchToId = toId && nextVolume?.id && Number(toId) === Number(nextVolume.id)
+          const matchFromCode = fromCode && currentCode && fromCode === currentCode
+          const matchToCode = toCode && nextCode && toCode === nextCode
+          const matchFromName = fromCode && currentName && fromCode === currentName
+          const matchToName = toCode && nextVolName && toCode === nextVolName
+
+          const matchFrom = matchFromId || matchFromCode || matchFromName
+          const matchTo = matchToId || matchToCode || matchToName
+          return matchFrom && matchTo
+        })
+      }
+
+      let intermission = tryMatch(manifestIntermissions)
+
+      if (!intermission) {
+        const intermissions = await ipcRenderer.invoke('paper:getIntermissions', this.paperId)
+        intermission = tryMatch(intermissions)
+      }
+
+      return intermission || null
+    },
+
+    /**
+     * 显示中场页面并加载音频
+     */
+    async showIntermissionPage(intermission, nextVolume, paperData) {
+      try {
+        this.showIntermission = true
+        this.showVolumeComplete = false
+
+        // 确定下一卷信息
+        const targetVolumeId = intermission.toVolumeId ?? intermission.to_volume_id ?? nextVolume?.id ?? null
+        const targetVolumeCode = intermission.toVolume ?? intermission.to_volume ?? (nextVolume?.volumeCode || nextVolume?.volume_code || '')
+        this.pendingNextVolumeId = targetVolumeId || null
+        this.pendingNextVolumeCode = targetVolumeCode || ''
+
+        // 文本与可跳过标识
+        this.intermissionText = intermission.intermissionText || intermission.intermission_text || ''
+        this.intermissionCanSkip = Boolean(intermission.canSkip ?? intermission.can_skip)
+
+        // 解析音频路径
+        this.intermissionAudioPath = await this.resolveIntermissionAudioPath(intermission, paperData)
+
+        // 自动播放（有音频时），否则直接进入完成逻辑
+        if (this.intermissionAudioPath) {
+          this.playIntermissionAudio()
+        } else {
+          this.intermissionAudioPlaying = false
+          this.intermissionAudioEndTimer = setTimeout(() => {
+            this.finishIntermission()
+          }, 500)
+        }
+      } catch (error) {
+        console.error('显示中场页面失败:', error)
+        this.finishIntermission()
+      }
+    },
+
+    /**
+     * 解析中场音频路径，优先本地路径（manifest 提取的 intermission 目录），否则使用 URL
+     */
+    async resolveIntermissionAudioPath(intermission, paperData) {
+      try {
+        const audioPath = intermission.intermissionAudioPath || intermission.intermission_audio_path || ''
+        const audioUrl = intermission.intermissionAudioUrl || intermission.intermission_audio_url || ''
+        const mediaDir = paperData?.mediaDir || ''
+
+        if (audioPath) {
+          // 相对路径（通常在 mediaDir/intermission/ 下）
+          const fullPath = path.join(mediaDir, audioPath.startsWith('intermission/') ? audioPath : path.join('intermission', audioPath))
+          if (fs.existsSync(fullPath)) {
+            return pathToFileURL(fullPath).href
+          }
+        }
+
+        if (audioUrl && (audioUrl.startsWith('http://') || audioUrl.startsWith('https://'))) {
+          return audioUrl
+        }
+      } catch (error) {
+        console.warn('解析中场音频路径失败:', error)
+      }
+      return ''
+    },
+
+    playIntermissionAudio() {
+      try {
+        const audioEl = this.$refs.intermissionAudioPlayer
+        if (!audioEl) {
+          this.intermissionAudioPlaying = false
+          this.finishIntermission()
+          return
+        }
+        this.intermissionAudioPlaying = true
+        audioEl.currentTime = 0
+        const playPromise = audioEl.play()
+        if (playPromise?.catch) {
+          playPromise.catch(err => {
+            console.warn('中场音频播放失败:', err)
+            this.intermissionAudioPlaying = false
+            this.intermissionAudioEndTimer = setTimeout(() => {
+              this.finishIntermission()
+            }, 500)
+          })
+        }
+      } catch (error) {
+        console.warn('中场音频播放异常:', error)
+        this.intermissionAudioPlaying = false
+        this.intermissionAudioEndTimer = setTimeout(() => {
+          this.finishIntermission()
+        }, 500)
+      }
+    },
+
+    onIntermissionAudioEnded() {
+      this.intermissionAudioPlaying = false
+      this.intermissionAudioEndTimer = setTimeout(() => {
+        this.finishIntermission()
+      }, 500)
+    },
+
+    onIntermissionAudioError() {
+      console.warn('中场音频播放错误，跳过中场')
+      this.intermissionAudioPlaying = false
+      this.intermissionAudioEndTimer = setTimeout(() => {
+        this.finishIntermission()
+      }, 500)
+    },
+
+    skipIntermission() {
+      if (!this.intermissionCanSkip) return
+      this.intermissionAudioPlaying = false
+      this.finishIntermission()
+    },
+
+    finishIntermission() {
+      if (this.intermissionAudioEndTimer) {
+        clearTimeout(this.intermissionAudioEndTimer)
+        this.intermissionAudioEndTimer = null
+      }
+      this.showIntermission = false
+
+      // 写入下一卷信息
+      if (this.pendingNextVolumeId) {
+        localStorage.setItem('currentVolumeId', String(this.pendingNextVolumeId))
+      }
+      if (this.pendingNextVolumeCode) {
+        localStorage.setItem('currentVolumeCode', this.pendingNextVolumeCode)
+      }
+
+      this.$router.push({
+        path: '/broadcast',
+        query: {
+          fromVolumeComplete: 'true'
+        }
+      })
+    },
     
     /**
      * 显示"作答完成"，1.5秒后提交并跳转结果页
@@ -2090,7 +2788,7 @@ export default {
       
       setTimeout(async () => {
         await this.submitAllAndComplete()
-      }, 1500)
+      }, 500)
     },
     
     /**
@@ -2226,7 +2924,8 @@ export default {
      * 检查选项是否被选中
      */
     isOptionSelected(questionIndex, optionId) {
-      return this.answeredQuestions[questionIndex] === optionId
+      const q = this.allQuestions[questionIndex]
+      return q && this.answeredQuestions[q.id] === optionId
     },
     
     /**
@@ -2240,36 +2939,23 @@ export default {
       }
       
       // 检查是否是当前题目（只有当前题目才能答题）
-      if (questionIndex !== this.currentQuestionIndex) {
+      // 检查是否是当前题目（只有当前题目才能答题）
+      // 特殊情况：题目组模式下，组内所有题目都可以作答，不受 currentQuestionIndex 限制
+      if (!this.isInQuestionGroup && questionIndex !== this.currentQuestionIndex) {
         console.log(`⚠️ 题目 ${questionIndex + 1} 不是当前题目（当前是第 ${this.currentQuestionIndex + 1} 题），不能选择答案`)
         return
       }
       
-      // 清除之前的自动跳转定时器（用户更换了答案）
-      if (this.autoNextTimer) {
-        clearTimeout(this.autoNextTimer)
-        this.autoNextTimer = null
+      // 记录答案和用时到内存
+      // 用时计算：以最后一次选择答案的时间点为准
+      const q = this.allQuestions[questionIndex]
+      if (q) {
+        this.$set(this.answeredQuestions, q.id, optionId)
       }
-      
-      // 记录答案和用时到内存（多次选择使用最后一次的时间）
-      this.$set(this.answeredQuestions, questionIndex, optionId)
       const timeSpent = this.answerTime - this.answerCountdown
       this.$set(this.answeredTimeSpent, questionIndex, timeSpent)
       const userAnswerText = option.optionName || option.label || String.fromCharCode(65 + optionId)
-      console.log(`✓ 题目 ${questionIndex + 1} 选择了答案:`, userAnswerText, `用时: ${timeSpent}秒`)
-      
-      // 设置2秒后自动跳转下一题（如果用户在2秒内未更换答案）
-      this.autoNextTimer = setTimeout(() => {
-        this.autoNextTimer = null
-        // 检查是否还在当前题目且倒计时还在进行
-        if (this.currentQuestionIndex === questionIndex && this.answerCountdown > 0) {
-          console.log(`⏱️ 用户2秒内未更换答案，自动跳转下一题`)
-          // 停止当前倒计时
-          this.stopAnswerCountdown()
-          // 触发答题时间结束逻辑（会自动标记过期并跳转）
-          this.onAnswerTimeUp()
-        }
-      }, 2000)
+      console.log(`✓ 题目 ${questionIndex + 1} 选择了答案:`, userAnswerText, `用时: ${timeSpent}秒（剩余${this.answerCountdown}秒）`)
       
       // 实时保存到数据库
       try {
@@ -2333,61 +3019,47 @@ export default {
      * 保存当前题目的答题记录（答题时间结束时自动调用）
      * 注意：如果用户已作答，selectOption 已保存记录，这里不再重复保存
      */
+    /**
+     * 按索引保存题目结果
+     */
+    async saveQuestionResultByIndex(questionIndex) {
+        try {
+            const question = this.allQuestions[questionIndex]
+            if (!question || !this.paperInfoId) return
+
+            // 检查是否已作答
+            const answerId = this.answeredQuestions[question.id || question.questionId || question.question_id]
+            if (answerId !== undefined) {
+               console.log(`✓ [saveQuestionResultByIndex] 题目 ${questionIndex + 1} 已作答，跳过自动保存`)
+               return
+            }
+
+            const questionId = question.id || question.question_id || question.questionId
+            const userId = (JSON.parse(localStorage.getItem('userInfo') || '{}').user || {}).userId
+            if (!questionId || !userId) return
+
+            await ipcRenderer.invoke('answer:saveQuestionResult', {
+              paperInfoId: this.paperInfoId,
+              paperId: this.paperId,
+              appUserId: userId,
+              questionId: questionId,
+              answerIds: '',
+              userAnswer: '',
+              result: 0,
+              questionSort: questionIndex + 1,
+              timeSpent: this.answerTime,
+              sectionId: question.section_id || question.sectionId || null,
+              volumeId: this.currentVolumeId || null
+            })
+            console.log(`✓ [saveQuestionResultByIndex] 题目 ${questionIndex + 1} 未作答自动保存完成`)
+
+        } catch (e) {
+            console.error(`保存题目 ${questionIndex} 失败`, e)
+        }
+    },
+
     async saveCurrentQuestionResult() {
-      try {
-        const question = this.allQuestions[this.currentQuestionIndex]
-        if (!question || !this.paperInfoId) {
-          console.error(`❌ [saveCurrentQuestionResult] 题目 ${this.currentQuestionIndex + 1} 数据无效，question=${!!question}, paperInfoId=${this.paperInfoId}`)
-          return
-        }
-        
-        const answerId = this.answeredQuestions[this.currentQuestionIndex]
-        
-        // 如果用户已作答，selectOption 已经保存了正确的用时，不再重复保存
-        if (answerId !== undefined) {
-          console.log(`✓ [saveCurrentQuestionResult] 题目 ${this.currentQuestionIndex + 1} 已在选择时保存，跳过`)
-          return
-        }
-        
-        // 获取题目ID（兼容多种字段名）
-        const questionId = question.id || question.question_id || question.questionId
-        if (!questionId) {
-          console.error(`❌ [saveCurrentQuestionResult] 题目 ${this.currentQuestionIndex + 1} 没有有效的ID，无法保存答案，question:`, JSON.stringify({
-            id: question.id,
-            question_id: question.question_id,
-            questionId: question.questionId,
-            title: question.title?.substring(0, 50)
-          }))
-          return
-        }
-        
-        const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
-        const userId = userInfo.userId || userInfo.user?.userId
-        if (!userId) {
-          console.error(`❌ [saveCurrentQuestionResult] 无法获取用户ID`)
-          return
-        }
-        
-        console.log(`📦 [saveCurrentQuestionResult] 保存未作答题目 ${this.currentQuestionIndex + 1}，questionId: ${questionId}`)
-        
-        // 未作答的题目：answerIds 为空，isCorrect 为 0，用时为完整答题时间
-        await ipcRenderer.invoke('answer:saveQuestionResult', {
-          paperInfoId: this.paperInfoId,
-          paperId: this.paperId,
-          appUserId: userId,
-          questionId: questionId,
-          answerIds: '',
-          userAnswer: '',
-          result: 0,
-          questionSort: this.currentQuestionIndex + 1,
-          timeSpent: this.answerTime, // 未作答用完整答题时间
-          sectionId: question.section_id || question.sectionId || null,
-          volumeId: this.currentVolumeId || null
-        })
-        console.log(`✓ [saveCurrentQuestionResult] 题目 ${this.currentQuestionIndex + 1} (ID: ${questionId}) 未作答，已保存，用时: ${this.answerTime}秒`)
-      } catch (error) {
-        console.error(`[saveCurrentQuestionResult] 保存题目 ${this.currentQuestionIndex + 1} 失败:`, error)
-      }
+      await this.saveQuestionResultByIndex(this.currentQuestionIndex)
     },
 
     // ==================== 结束：题目音频播放和答题计时相关方法 ====================
@@ -2431,7 +3103,7 @@ export default {
 
         for (let i = 0; i < this.allQuestions.length; i++) {
           const question = this.allQuestions[i]
-          const answerId = this.answeredQuestions[i]
+          const answerId = this.answeredQuestions[question.id || question.questionId || question.question_id]
           
           if (answerId === undefined) {
             // 未答题，标记为错误
@@ -2517,14 +3189,24 @@ export default {
       const questions = this.sectionQuestionsMap[sectionId] || []
       if (questions.length === 0) return false
       
-      // 找到当前题目在哪个大题中
-      const currentQuestion = this.allQuestions[this.currentQuestionIndex]
+      const currentQuestion = this.currentQuestion
       if (!currentQuestion) return false
       
       const currentSectionId = currentQuestion.sectionId || currentQuestion.section_id
       if (currentSectionId !== sectionId) return false
       
-      // 计算当前题目在这个大题中的索引
+      // 如果不在当前大题的 allQuestions 范围，直接返回
+      if (!this.allQuestions || !this.allQuestions[qIndex]) return false
+
+      if (this.isInQuestionGroup) {
+          // 题目组模式：高亮组内所有题目
+          // 只要该 qIndex 对应的题目 ID 在当前题目组中，就高亮
+          const targetQ = this.allQuestions[qIndex]
+          const groupIds = this.currentGroupQuestions.map(q => q.id)
+          return groupIds.includes(targetQ.id)
+      }
+      
+      // 普通模式：只高亮当前题目
       const questionsInSection = this.allQuestions.filter(q => 
         (q.sectionId || q.section_id) === sectionId
       )
@@ -2536,10 +3218,8 @@ export default {
     /**
      * 检查题目是否已作答（右侧题号列表用）
      */
-    isQuestionAnswered(sectionId, qIndex) {
-      // 计算全局索引
-      const globalIndex = this.getGlobalIndexBySection(sectionId, qIndex)
-      return this.answeredQuestions[globalIndex] !== undefined
+    isQuestionAnswered(questionId) {
+      return this.answeredQuestions[questionId] !== undefined
     },
     
     /**
@@ -2805,12 +3485,6 @@ export default {
       this.answerCountdownTimer = null
     }
     
-    // 清除自动跳转下一题定时器
-    if (this.autoNextTimer) {
-      clearTimeout(this.autoNextTimer)
-      this.autoNextTimer = null
-    }
-    
     // 停止大题音频播放
     if (this.$refs.sectionAudioPlayer) {
       this.$refs.sectionAudioPlayer.pause()
@@ -2874,10 +3548,9 @@ export default {
   background: #fff;
   display: flex;
   position: relative;
-  padding-bottom: 60px; /* 为底部频率条留出空间 */
+  padding-bottom: 30px; /* 为底部频率条留出空间 */
   overflow: hidden; /* 防止整体溢出 */
-  padding-top: 10px;
-  padding-left: 20px;
+  padding-left: 0px;
   margin-left: 0px;
 }
 
@@ -2911,25 +3584,49 @@ export default {
   padding: 0;
   margin: 0;
   margin-left: 0 !important;
-  padding-top: 50px; /* 为固定头部留出空间 */
+  /* padding-top: 0; header is not fixed anymore */
 }
 
 /* 固定悬浮头部 */
 .fixed-header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 300px; /* 为右侧学生信息区留出空间 */
-  z-index: 1000;
+  position: relative; /* Changed from fixed */
+  width: 100%;
+  z-index: 100;
   background: #f8f9fa; /* 乳白色背景 */
   color: #333;
   padding: 10px 30px;
   display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  border-bottom: 1px solid #e0e0e0;
+  min-height: 50px;
+  height: auto;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.header-top-row {
+  display: flex;
   align-items: center;
   gap: 30px;
-  border-bottom: 1px solid #e0e0e0;
-  height: 50px;
+  width: 100%;
+}
+
+.header-instruction-text {
+  font-size: 14px;
+  color: #606266; /* 次要文本颜色 */
+  background: transparent; /* 移除背景色 */
+  padding: 0; /* 移除内边距 */
+  margin-top: 8px; /* 调整顶部间距 */
+  border-radius: 0;
+  line-height: 1.6;
+  width: 100%;
   box-sizing: border-box;
+  border: none; /* 移除边框 */
+  text-align: left;
+  text-indent: 2em; /* 恢复首行缩进 */
+  padding-left: 2px; /* 微调左侧对齐 */
 }
 
 /* 大题标题 */
@@ -3412,7 +4109,7 @@ export default {
 .student-info-panel {
   width: 300px;
   background: #f9f9f9;
-  padding: 30px 20px;
+  padding: 20px 15px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3423,7 +4120,7 @@ export default {
 
 .avatar-section {
   position: relative;
-  margin-bottom: 30px;
+  margin-bottom: 15px;
 }
 
 .avatar-number {
@@ -3444,37 +4141,37 @@ export default {
 }
 
 .avatar-placeholder {
-  width: 100px;
-  height: 100px;
+  width: 70px;
+  height: 70px;
   border-radius: 50%;
   background: #e0e0e0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 48px;
+  font-size: 32px;
   color: #999;
 }
 
 .student-details {
   width: 100%;
-  margin-bottom: 30px;
+  margin-bottom: 15px;
 }
 
 .info-item {
   display: flex;
   flex-direction: column;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   text-align: left;
 }
 
 .info-label {
   font-size: 14px;
   color: #666;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .info-value {
-  font-size: 18px;
+  font-size: 16px;
   color: #409EFF; /* 蓝色高亮 */
   font-weight: bold; /* 加粗 */
 }
@@ -3492,6 +4189,7 @@ export default {
 
 .section-title {
   font-size: 16px;
+  line-height: 1.5;
   font-weight: bold;
   color: #333;
   margin-bottom: 12px;
@@ -3550,17 +4248,17 @@ export default {
 }
 
 .volume-control {
-  position: absolute;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: calc(100% - 40px);
-  max-width: 160px;
+  position: relative;
+  width: 100%;
+  max-width: 160px; /* 恢复原来的宽度限制 */
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-top: 10px;
+  padding-top: 15px;
   border-top: 1px solid #e0e0e0;
+  margin-top: auto; /* 保持在底部 */
+  flex-shrink: 0;
+  padding-bottom: 20px;
 }
 
 .volume-slider {
@@ -3587,7 +4285,7 @@ export default {
   left: 0;
   right: 0;
   width: 100%;
-  height: 60px;
+  height: 30px;
   background-color: #409EFF; /* 蓝色背景 */
   z-index: 1000;
 }
@@ -3596,5 +4294,92 @@ export default {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+/* 中场遮罩样式 */
+.intermission-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.intermission-content {
+  background: #ffffff;
+  padding: 32px 40px;
+  border-radius: 12px;
+  width: 520px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  text-align: center;
+}
+
+.intermission-audio-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: #409eff;
+  font-weight: 600;
+}
+
+.intermission-audio-indicator .pulse-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #409eff;
+  position: relative;
+  animation: pulse 1.4s infinite;
+}
+
+.intermission-audio-indicator .pulse-text {
+  font-size: 15px;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(64, 158, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0);
+  }
+}
+
+.intermission-text {
+  font-size: 16px;
+  line-height: 1.7;
+  color: #303133;
+  margin-bottom: 20px;
+  text-align: left;
+  word-break: break-all;
+}
+
+.intermission-skip {
+  margin-top: 4px;
+}
+
+.group-intro-container {
+  padding: 15px 20px;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #ebeef5;
+  margin-bottom: 20px;
+  border-radius: 4px;
+}
+.group-name {
+  font-size: 16px;
+  font-weight: bold;
+  color: #303133;
+  margin-bottom: 8px;
+}
+.group-text {
+  font-size: 14px;
+  color: #606266;
+  line-height: 1.6;
+  text-indent: 2em;
 }
 </style>

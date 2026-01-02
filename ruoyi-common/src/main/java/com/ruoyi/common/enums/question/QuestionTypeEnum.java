@@ -2,7 +2,6 @@ package com.ruoyi.common.enums.question;
 
 import lombok.Getter;
 
-
 /**
  * 题目类型枚举
  */
@@ -13,7 +12,9 @@ public enum QuestionTypeEnum {
     TRUE_FALSE(2, "判断题", 3),
     FILL_BLANK(3, "填空题", 4),
     SORT(4, "排序题", 5),
-    CLOZE(5, "完形填空", 6);
+    CLOZE(5, "完形填空", 6),
+    ESSAY(6, "作文/简答", 7),
+    READING_COMPREHENSION(7, "阅读理解", 8);
 
     /**
      * 类型值
@@ -36,12 +37,12 @@ public enum QuestionTypeEnum {
         this.order = order;
     }
 
-    public static boolean displayOptionContent(Integer questionType){
-       return QuestionTypeEnum.FILL_BLANK.getValue().equals(questionType)
+    public static boolean displayOptionContent(Integer questionType) {
+        return QuestionTypeEnum.FILL_BLANK.getValue().equals(questionType)
                 || QuestionTypeEnum.SORT.getValue().equals(questionType);
     }
 
-    public static boolean displayOptionName(Integer questionType){
+    public static boolean displayOptionName(Integer questionType) {
         return QuestionTypeEnum.SINGLE_CHOICE.getValue().equals(questionType)
                 || QuestionTypeEnum.MULTIPLE_CHOICE.getValue().equals(questionType)
                 || QuestionTypeEnum.TRUE_FALSE.getValue().equals(questionType)

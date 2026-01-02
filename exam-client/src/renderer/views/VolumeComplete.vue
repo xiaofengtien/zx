@@ -161,6 +161,9 @@ export default {
         
         if (intermission) {
           // 有中场设置，跳转到中场页面
+          if (nextVolume?.id) {
+            localStorage.setItem('currentVolumeId', String(nextVolume.id))
+          }
           localStorage.setItem('currentVolumeCode', nextVolumeCode)
           this.$router.push({
             path: '/intermission',
@@ -173,8 +176,16 @@ export default {
           })
         } else {
           // 没有中场设置，直接跳转到下一卷别的广播页面
+          if (nextVolume?.id) {
+            localStorage.setItem('currentVolumeId', String(nextVolume.id))
+          }
           localStorage.setItem('currentVolumeCode', nextVolumeCode)
-          this.$router.push('/broadcast')
+          this.$router.push({
+            path: '/broadcast',
+            query: {
+              fromVolumeComplete: 'true'
+            }
+          })
         }
       } catch (error) {
         console.error('跳转下一卷别失败:', error)
@@ -372,5 +383,4 @@ export default {
   text-align: center;
 }
 </style>
-
 

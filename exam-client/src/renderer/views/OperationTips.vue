@@ -47,7 +47,7 @@
           </p>
           <!-- 试听文本：只有在数据加载完成且存在时才显示 -->
           <div class="test-text-box" v-if="dataLoaded && trialListenAudioText">
-            <p class="test-text-content">{{ trialListenAudioText }}</p>
+            <div class="test-text-content" v-html="trialListenAudioText"></div>
           </div>
           <div class="test-buttons">
             <el-button type="success" @click="handleClear">清晰</el-button>
@@ -1103,23 +1103,14 @@ export default {
     },
 
     handleClear() {
-      // 弹出确认框（参考图片样式）
+      // 弹出确认框
       this.$confirm(
-        '<div style="text-align: left; padding: 5px 0;">' +
-        '<div style="display: flex; align-items: flex-start;">' +
-        '<div style="width: 24px; height: 24px; border-radius: 50%; background-color: #E6A23C; display: flex; align-items: center; justify-content: center; margin-right: 12px; flex-shrink: 0; margin-top: 2px;">' +
-        '<span style="color: white; font-size: 16px; font-weight: bold;">!</span>' +
-        '</div>' +
-        '<div style="flex: 1;">' +
-        '<div style="font-size: 16px; color: #303133; margin-bottom: 12px; line-height: 1.5; font-weight: 500;">' +
+        '<div style="font-size: 16px; color: #303133; margin-bottom: 12px; line-height: 1.5;">' +
         '请确定您的放音音量大小是否调至合适位置?' +
         '</div>' +
         '<div style="font-size: 14px; color: #E6A23C; line-height: 1.8;">' +
-        '点击<span style="color: #409EFF; font-weight: 500;">【确定】</span>完成试听,等待考试正式开始<br/>' +
-        '点击<span style="color: #409EFF; font-weight: 500;">【取消】</span>可返回重新试听' +
-        '</div>' +
-        '</div>' +
-        '</div>' +
+        '点击【确定】完成试听，等待考试正式开始<br/>' +
+        '点击【取消】可返回重新试听' +
         '</div>',
         '提示',
         {
@@ -1128,8 +1119,6 @@ export default {
           dangerouslyUseHTMLString: true,
           type: 'warning',
           customClass: 'volume-confirm-dialog',
-          confirmButtonClass: 'el-button--primary',
-          cancelButtonClass: 'el-button--default',
           showClose: false,
           closeOnClickModal: false,
           closeOnPressEscape: false
@@ -1245,7 +1234,20 @@ export default {
 <style scoped>
 /* 音量确认对话框样式 */
 ::v-deep .volume-confirm-dialog {
-  min-width: 400px;
+  min-width: 420px;
+}
+
+::v-deep .volume-confirm-dialog .el-message-box__container {
+  display: flex;
+  align-items: flex-start;
+}
+
+::v-deep .volume-confirm-dialog .el-message-box__status {
+  font-size: 24px !important;
+  position: relative;
+  top: 0;
+  transform: translateY(0);
+  margin-right: 10px;
 }
 
 ::v-deep .volume-confirm-dialog .el-message-box__message {
@@ -1290,13 +1292,13 @@ export default {
 }
 
 .content-area {
-  padding: 60px 40px 40px;
+  padding: 40px 30px 20px;
   max-width: 1200px;
   margin: 0 auto;
 }
 
 .section {
-  margin-bottom: 40px;
+  margin-bottom: 15px;
 }
 
 .section-header {
@@ -1328,9 +1330,9 @@ export default {
 .tips-card {
   background: #E8F5E9;
   border-radius: 8px;
-  padding: 30px;
-  margin-top: 20px;
-  min-height: 300px; /* 固定最小高度，避免图片和文本加载后自适应 */
+  padding: 15px 20px;
+  margin-top: 10px;
+  min-height: 150px; /* 减小高度以适应窗口 */
   display: flex;
   flex-direction: column;
 }
@@ -1338,18 +1340,18 @@ export default {
 .headset-images {
   display: flex;
   justify-content: center;
-  gap: 20px;
-  margin-bottom: 20px;
-  min-height: 200px; /* 固定高度，避免加载后自适应 */
+  gap: 15px;
+  margin-bottom: 10px;
+  min-height: 100px; /* 减小高度以适应窗口 */
   align-items: center; /* 垂直居中 */
 }
 
 .headset-img {
-  max-width: 200px;
-  max-height: 200px; /* 固定最大高度 */
+  max-width: 150px;
+  max-height: 120px; /* 减小图片高度 */
   width: auto;
   height: auto;
-  border-radius: 8px;
+  border-radius: 6px;
   object-fit: contain; /* 保持比例，不裁剪 */
 }
 
@@ -1372,17 +1374,23 @@ export default {
 
 .instruction-text-container {
   display: flex;
-  justify-content: center;
-  align-items: center;
+  justify-content: flex-start;
+  align-items: flex-start;
   margin-top: 20px;
 }
 
 .instruction-text {
-  text-align: center;
+  text-align: left;
   font-size: 16px;
   color: #606266;
-  line-height: 1.6;
+  line-height: 1.8;
   max-width: 100%;
+}
+
+/* 富文本样式支持 */
+.instruction-text p {
+  margin: 0 0 10px 0;
+  text-align: left;
 }
 
 .instruction-text-container .instruction-text {
@@ -1390,9 +1398,9 @@ export default {
 }
 
 .audio-test-content {
-  margin-top: 20px;
+  margin-top: 10px;
   position: relative; /* 相对定位，为固定按钮做准备 */
-  min-height: 300px; /* 固定最小高度，避免内容加载后自适应 */
+  min-height: 120px; /* 减小高度以适应窗口 */
 }
 
 .test-instruction {
@@ -1407,10 +1415,10 @@ export default {
   background: #fff;
   border: 1px solid #DCDFE6;
   border-radius: 4px;
-  padding: 20px;
-  margin-bottom: 20px;
-  min-height: 80px; /* 固定最小高度，避免加载后自适应 */
-  max-height: 200px; /* 限制最大高度，避免过长 */
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  min-height: 50px; /* 减小高度以适应窗口 */
+  max-height: 100px; /* 减小最大高度 */
   overflow-y: auto; /* 如果内容过长，可以滚动 */
 }
 
@@ -1418,7 +1426,16 @@ export default {
   font-size: 16px;
   color: #303133;
   line-height: 1.8;
-  white-space: pre-wrap; /* 保留换行和空格 */
+  white-space: pre-wrap; /* 保留换行和空格，兼容纯文本换行 */
+}
+
+/* 富文本段落样式 */
+.test-text-content p {
+  margin: 0 0 10px 0;
+}
+
+.test-text-content p:last-child {
+  margin-bottom: 0;
 }
 
 .test-text-chinese {
@@ -1438,16 +1455,19 @@ export default {
   display: flex;
   gap: 12px;
   justify-content: center;
-  position: relative; /* 相对定位 */
-  margin-top: 20px; /* 固定上边距 */
-  height: 40px; /* 固定高度，确保按钮区域不会变化 */
-  align-items: center; /* 垂直居中 */
+  position: fixed; /* 固定定位在底部 */
+  bottom: 60px; /* 距离底部60px */
+  left: 0;
+  right: 0;
+  height: 40px;
+  align-items: center;
+  background: transparent;
+  z-index: 100;
 }
 
 .test-buttons .el-button {
   min-width: 100px;
   padding: 8px 16px;
   font-size: 14px;
-  position: relative; /* 相对定位，确保按钮位置固定 */
 }
 </style>

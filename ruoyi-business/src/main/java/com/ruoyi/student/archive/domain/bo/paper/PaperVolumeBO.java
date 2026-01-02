@@ -5,6 +5,7 @@ import lombok.Data;
 import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * 试卷卷别参数
@@ -13,7 +14,7 @@ import java.io.Serializable;
  */
 @Data
 public class PaperVolumeBO implements Serializable {
-    
+
     private static final long serialVersionUID = 1L;
 
     /**
@@ -22,9 +23,13 @@ public class PaperVolumeBO implements Serializable {
     private Integer id;
 
     /**
+     * 临时ID（用于导入时关联，格式：temp_vol_1）
+     */
+    private String tempId;
+
+    /**
      * 试卷ID
      */
-    @NotNull(message = "试卷ID不能为空")
     private Integer paperId;
 
     /**
@@ -43,6 +48,9 @@ public class PaperVolumeBO implements Serializable {
      */
     @NotNull(message = "卷别顺序不能为空")
     private Integer volumeOrder;
+
+    /**
+     * 大题列表（用于导入时关联）
+     */
+    private List<PaperSectionBO> sections;
 }
-
-

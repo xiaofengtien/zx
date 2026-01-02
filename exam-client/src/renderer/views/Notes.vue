@@ -229,8 +229,8 @@ export default {
         // 使用"时长+3秒"算法：在音频开始播放时设置定时器
         // 定时器时间 = 音频时长（秒）* 1000 + 3000（3秒）
         if (audioDuration > 0) {
-          const totalWaitTime = (audioDuration * 1000) + 3000
-          console.log(`设置定时器: 音频时长(${audioDuration}秒) + 3秒 = ${totalWaitTime}毫秒`)
+          const totalWaitTime = (audioDuration * 1000) + 500
+          console.log(`设置定时器: 音频时长(${audioDuration}秒) + 0.5秒 = ${totalWaitTime}毫秒`)
           this.audioPlayTimer = setTimeout(() => {
             console.log('✓ 定时器触发：音频应该已播放完成并等待3秒，开始跳转')
             this.handleAudioComplete()
@@ -238,8 +238,8 @@ export default {
         } else {
           // 如果无法获取时长，使用默认值（251秒 + 3秒）
           const defaultDuration = 251
-          const totalWaitTime = (defaultDuration * 1000) + 3000
-          console.warn(`无法获取音频时长，使用默认值${defaultDuration}秒 + 3秒`)
+          const totalWaitTime = (defaultDuration * 1000) + 500
+          console.warn(`无法获取音频时长，使用默认值${defaultDuration}秒 + 0.5秒`)
           this.audioPlayTimer = setTimeout(() => {
             console.log('✓ 定时器触发（使用默认时长）：开始跳转')
             this.handleAudioComplete()
@@ -437,7 +437,7 @@ export default {
 .content-area {
   max-width: 800px;
   padding: 40px;
-  text-align: center;
+  text-align: left;
 }
 
 .notes-text-wrapper {
@@ -453,9 +453,15 @@ export default {
   font-size: 20px;
   color: #303133;
   line-height: 2;
-  text-align: center;
+  text-align: left;
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+/* 富文本样式支持 */
+.notes-text p {
+  margin: 0 0 15px 0;
+  text-align: left;
 }
 </style>
 

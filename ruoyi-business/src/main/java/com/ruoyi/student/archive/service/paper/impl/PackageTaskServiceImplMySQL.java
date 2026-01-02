@@ -451,7 +451,7 @@ public class PackageTaskServiceImplMySQL implements IPackageTaskService {
             log.error("获取所有任务失败", e);
         }
         
-        log.debug("获取所有任务列表，共 {} 个任务", allTasks.size());
+        //log.debug("获取所有任务列表，共 {} 个任务", allTasks.size());
         return allTasks;
     }
 

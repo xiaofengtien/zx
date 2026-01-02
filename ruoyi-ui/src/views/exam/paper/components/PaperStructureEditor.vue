@@ -654,43 +654,65 @@ export default {
       this.loadAudioInfo()
     },
 
-    /** 加载音频信息 */
     async loadAudioInfo() {
+      console.log('PaperStructureEditor: loadAudioInfo called')
       // 加载卷别音频
       for (const volume of this.volumeList) {
-        try {
-          const res = await getQuestionMediaByVolumeId({ volumeId: volume.id })
-          if (res.code === 200 && res.data && res.data.length > 0) {
-            const audioMedia = res.data.find(m => m.mediaType === 7)
-            if (audioMedia) {
-              this.$set(this.volumeAudioMap, volume.id, {
-                url: audioMedia.mediaUrl,
-                path: audioMedia.mediaPath,
-                mediaId: audioMedia.id
-              })
-            }
-          }
-        } catch (e) {
-          // 忽略错误
+        let hasAudio = false
+        // 1. 优先从 volume 对象中获取
+        if (volume.volumeAudioUrl) {
+           console.log(`Editor: Volume ${volume.id} has audio in entity:`, volume.volumeAudioUrl)
+           this.$set(this.volumeAudioMap, volume.id, {
+             url: volume.volumeAudioUrl,
+             path: volume.volumeAudioPath || volume.volumeAudioUrl,
+             duration: volume.volumeAudioDuration || null
+           })
+           hasAudio = true
+        }
+
+        // 2. 兜底：从媒体表获取
+        if (!hasAudio) {
+           try {
+             const res = await getQuestionMediaByVolumeId({ volumeId: volume.id })
+             if (res.code === 200 && res.data && res.data.length > 0) {
+               const audioMedia = res.data.find(m => m.mediaType === 7)
+               if (audioMedia) {
+                 console.log(`Editor: Volume ${volume.id} found audio in media table:`, audioMedia.mediaUrl)
+                 this.$set(this.volumeAudioMap, volume.id, {
+                   url: audioMedia.mediaUrl,
+                   path: audioMedia.mediaPath,
+                   mediaId: audioMedia.id
+                 })
+               }
+             }
+           } catch (e) {
+             console.error(`Editor: Failed to fetch media for volume ${volume.id}`, e)
+           }
         }
       }
 
       // 加载大题音频
       for (const section of this.sectionList) {
-        try {
-          const res = await getQuestionMediaBySectionId({ sectionId: section.id })
-          if (res.code === 200 && res.data && res.data.length > 0) {
-            const audioMedia = res.data.find(m => m.mediaType === 8)
-            if (audioMedia) {
-              this.$set(this.sectionAudioMap, section.id, {
-                url: audioMedia.mediaUrl,
-                path: audioMedia.mediaPath,
-                mediaId: audioMedia.id
-              })
-            }
-          }
-        } catch (e) {
-          // 忽略错误
+        if (section.instructionAudioUrl) {
+             this.$set(this.sectionAudioMap, section.id, {
+                url: section.instructionAudioUrl,
+                path: section.instructionAudioPath,
+                duration: section.instructionAudioDuration || null
+             })
+        } else {
+             try {
+                const res = await getQuestionMediaBySectionId({ sectionId: section.id })
+                if (res.code === 200 && res.data && res.data.length > 0) {
+                   const audioMedia = res.data.find(m => m.mediaType === 8)
+                   if (audioMedia) {
+                      this.$set(this.sectionAudioMap, section.id, {
+                        url: audioMedia.mediaUrl,
+                        path: audioMedia.mediaPath,
+                        mediaId: audioMedia.id
+                      })
+                   }
+                }
+             } catch (e) {}
         }
       }
     },

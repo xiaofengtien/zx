@@ -68,7 +68,7 @@ class MigrationService {
    */
   async runMigrations() {
     console.log('=== 开始执行数据库迁移 ===')
-    
+
     // 获取已应用的迁移
     const appliedMigrations = this.getAppliedMigrations()
     console.log(`已应用的迁移: ${appliedMigrations.length} 个`)
@@ -79,6 +79,7 @@ class MigrationService {
 
     // 执行未应用的迁移
     let appliedCount = 0
+    let skippedCount = 0
     for (const migration of migrationFiles) {
       if (!appliedMigrations.includes(migration.version)) {
         try {
@@ -87,16 +88,24 @@ class MigrationService {
           this.recordMigration(migration.version, migration.description)
           appliedCount++
         } catch (error) {
-          console.error(`迁移 ${migration.version} 执行失败:`, error)
-          throw error // 迁移失败时停止
+          // 检查是否是因为表不存在导致的错误
+          // 这种情况下，initTables 会创建完整表结构，迁移可以安全跳过
+          if (error.message && error.message.includes('no such table')) {
+            console.log(`迁移 ${migration.version} 跳过（表尚未创建，initTables 会处理）`)
+            this.recordMigration(migration.version, `${migration.description} (skipped - table not exist)`)
+            skippedCount++
+          } else {
+            console.error(`迁移 ${migration.version} 执行失败:`, error)
+            throw error // 其他错误时停止
+          }
         }
       } else {
         console.log(`跳过已应用的迁移: ${migration.version}`)
       }
     }
 
-    if (appliedCount > 0) {
-      console.log(`✓ 数据库迁移完成，应用了 ${appliedCount} 个新迁移`)
+    if (appliedCount > 0 || skippedCount > 0) {
+      console.log(`✓ 数据库迁移完成，应用了 ${appliedCount} 个，跳过了 ${skippedCount} 个`)
     } else {
       console.log('✓ 数据库已是最新版本，无需迁移')
     }
@@ -107,7 +116,7 @@ class MigrationService {
    */
   getMigrationFiles() {
     const migrations = []
-    
+
     // 如果migrations目录不存在，创建它
     if (!fs.existsSync(this.migrationsPath)) {
       fs.mkdirSync(this.migrationsPath, { recursive: true })
@@ -123,7 +132,7 @@ class MigrationService {
       try {
         const migrationPath = path.join(this.migrationsPath, file)
         const migration = require(migrationPath)
-        
+
         // 从文件名提取版本号（格式：001_add_paper_type.js）
         const match = file.match(/^(\d+)_(.+)\.js$/)
         if (match) {
@@ -161,7 +170,7 @@ class MigrationService {
   async rollbackMigration(version) {
     const migrationFiles = this.getMigrationFiles()
     const migration = migrationFiles.find(m => m.version === version)
-    
+
     if (!migration) {
       throw new Error(`未找到迁移 ${version}`)
     }

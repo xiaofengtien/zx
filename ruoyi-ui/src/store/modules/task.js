@@ -13,21 +13,30 @@ const state = {
 }
 
 const getters = {
-    // 进行中的任务
-    inProgressTasks: state => {
-        return state.tasks.filter(task => task.status === 'inProgress')
+    // 按创建时间倒序排序（最新的在前面）
+    sortedTasks: state => {
+        return [...state.tasks].sort((a, b) => {
+            // 解析时间字符串进行比较
+            const timeA = a.createTime ? new Date(a.createTime).getTime() : 0
+            const timeB = b.createTime ? new Date(b.createTime).getTime() : 0
+            return timeB - timeA // 倒序
+        })
     },
-    // 已完成的任务
-    completedTasks: state => {
-        return state.tasks.filter(task => task.status === 'completed')
+    // 进行中的任务（已排序）
+    inProgressTasks: (state, getters) => {
+        return getters.sortedTasks.filter(task => task.status === 'inProgress')
     },
-    // 失败的任务
-    failedTasks: state => {
-        return state.tasks.filter(task => task.status === 'failed')
+    // 已完成的任务（已排序）
+    completedTasks: (state, getters) => {
+        return getters.sortedTasks.filter(task => task.status === 'completed')
     },
-    // 已取消的任务
-    cancelledTasks: state => {
-        return state.tasks.filter(task => task.status === 'cancelled')
+    // 失败的任务（已排序）
+    failedTasks: (state, getters) => {
+        return getters.sortedTasks.filter(task => task.status === 'failed')
+    },
+    // 已取消的任务（已排序）
+    cancelledTasks: (state, getters) => {
+        return getters.sortedTasks.filter(task => task.status === 'cancelled')
     },
     // 未完成任务数量(用于徽章显示)
     unfinishedCount: state => {
@@ -122,7 +131,7 @@ function convertBackendTaskToFrontend(backendTask) {
     let taskName
     let version = null
     let versionSuffix = ''
-    
+
     if (backendTask.newVersion != null) {
         // 任务已完成，显示新版本号
         version = backendTask.newVersion
@@ -132,7 +141,7 @@ function convertBackendTaskToFrontend(backendTask) {
         version = backendTask.currentVersion + 1
         versionSuffix = `V${version}`
     }
-    
+
     if (backendTask.paperName) {
         // 使用后端返回的paperName，格式：试卷包生成 - ${paperName}V${version}
         if (versionSuffix) {
@@ -181,12 +190,12 @@ const actions = {
                 const frontendTasks = backendTasks.map(backendTask => {
                     return convertBackendTaskToFrontend(backendTask)
                 })
-                
+
                 // 合并策略：保留前端新添加的任务（可能还未同步到后端），合并后端任务
                 const existingTaskIds = new Set(state.tasks.map(t => t.id))
                 const newTasks = frontendTasks.filter(t => !existingTaskIds.has(t.id))
                 const mergedTasks = [...state.tasks, ...newTasks]
-                
+
                 // 更新已存在的任务（从后端获取最新状态）
                 const updatedTasks = mergedTasks.map(frontendTask => {
                     const backendTask = backendTasks.find(bt => {
@@ -200,7 +209,7 @@ const actions = {
                     // 否则保留前端任务（可能是刚添加的，还未同步到后端）
                     return frontendTask
                 })
-                
+
                 // 清空现有任务，替换为合并后的任务
                 commit('SET_ALL_TASKS', updatedTasks)
             }
