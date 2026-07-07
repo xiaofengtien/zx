@@ -4,7 +4,7 @@
 
 ### 1. 后端Hash算法（Java）
 
-**位置**：`ruoyi-business/src/main/java/com/ruoyi/student/archive/service/paper/impl/PaperPackageService.java`
+**位置**：`zx-business/src/main/java/com/zx/student/archive/service/paper/impl/PaperPackageService.java`
 
 ```java
 public String calculateHash(byte[] data) {

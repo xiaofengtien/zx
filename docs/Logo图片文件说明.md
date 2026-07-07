@@ -10,7 +10,7 @@
 
 ### 1. 后台管理系统 Logo
 
-**文件路径：** `ruoyi-ui/public/assets/images/logo.png`
+**文件路径：** `zx-ui/public/assets/images/logo.png`
 
 **用途：**
 - 侧边栏Logo（展开和折叠状态）
@@ -36,8 +36,8 @@
 
 以下文件已更新为使用 `/assets/images/logo.png` 路径：
 
-1. `ruoyi-ui/src/layout/components/Sidebar/Logo.vue` - 侧边栏Logo，使用 `/assets/images/logo.png`
-2. `ruoyi-ui/public/index.html` - Favicon引用，使用 `/assets/images/logo.png`
+1. `zx-ui/src/layout/components/Sidebar/Logo.vue` - 侧边栏Logo，使用 `/assets/images/logo.png`
+2. `zx-ui/public/index.html` - Favicon引用，使用 `/assets/images/logo.png`
 3. `exam-client/src/renderer/views/Login.vue` - 客户端登录页Logo，使用 `/assets/images/logo.png`
 4. `exam-client/src/renderer/views/PaperSelect.vue` - 客户端试卷选择页Logo，使用 `/assets/images/logo.png`
 
@@ -45,13 +45,13 @@
 
 以下代码生成的SVG文件已被删除：
 
-1. `ruoyi-ui/src/assets/images/logo.svg` - 已删除
-2. `ruoyi-ui/public/favicon.svg` - 已删除
+1. `zx-ui/src/assets/images/logo.svg` - 已删除
+2. `zx-ui/public/favicon.svg` - 已删除
 
 ## 🚀 使用步骤
 
 1. 将您的Logo图片文件重命名为 `logo.png`
-2. **直接替换** `ruoyi-ui/public/assets/images/logo.png`（当前为占位符文件）
+2. **直接替换** `zx-ui/public/assets/images/logo.png`（当前为占位符文件）
 3. **直接替换** `exam-client/public/assets/images/logo.png`（当前为占位符文件）
 4. 刷新页面查看效果
 

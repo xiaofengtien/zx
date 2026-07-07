@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zx.student.archive.mapper.paper.PaperPackageTaskMapper">
+
+    <resultMap id="PaperPackageTaskResult" type="com.zx.student.archive.domain.paper.PaperPackageTask">
+        <id     property="id"                column="id"                />
+        <result property="paperId"           column="paper_id"           />
+        <result property="paperName"         column="paper_name"         />
+        <result property="currentVersion"    column="current_version"    />
+        <result property="newVersion"        column="new_version"        />
+        <result property="status"            column="status"             />
+        <result property="progress"          column="progress"           />
+        <result property="currentStep"       column="current_step"      />
+        <result property="errorMessage"      column="error_message"     />
+        <result property="startTime"         column="start_time"         />
+        <result property="finishTime"        column="finish_time"        />
+        <result property="uploadId"          column="upload_id"          />
+        <result property="objectKey"         column="object_key"         />
+        <result property="uploadedParts"      column="uploaded_parts"     />
+        <result property="fileSize"          column="file_size"          />
+        <result property="chunkSize"         column="chunk_size"         />
+        <result property="createBy"           column="create_by"          />
+        <result property="createTime"         column="create_time"        />
+        <result property="updateBy"           column="update_by"          />
+        <result property="updateTime"        column="update_time"        />
+        <result property="delFlag"            column="del_flag"           />
+        <result property="remark"             column="remark"             />
+    </resultMap>
+
+    <sql id="selectPaperPackageTaskVo">
+        select id, paper_id, paper_name, current_version, new_version,
+               status, progress, current_step, error_message,
+               start_time, finish_time,
+               upload_id, object_key, uploaded_parts, file_size, chunk_size,
+               create_by, create_time, update_by, update_time, del_flag, remark
+        from paper_package_task
+    </sql>
+
+    <select id="selectLatestRunningTaskByPaperId" parameterType="Integer" resultMap="PaperPackageTaskResult">
+        <include refid="selectPaperPackageTaskVo"/>
+        where paper_id = #{paperId}
+          and del_flag = '0'
+          and status in ('PENDING', 'RUNNING')
+        order by create_time desc
+        limit 1
+    </select>
+
+    <select id="selectLatestTaskByPaperId" parameterType="Integer" resultMap="PaperPackageTaskResult">
+        <include refid="selectPaperPackageTaskVo"/>
+        where paper_id = #{paperId}
+          and del_flag = '0'
+        order by create_time desc
+        limit 1
+    </select>
+
+    <select id="selectAllTasks" resultMap="PaperPackageTaskResult">
+        <include refid="selectPaperPackageTaskVo"/>
+        where del_flag = '0'
+        order by id desc
+    </select>
+
+    <select id="selectTasksByPaperId" parameterType="Integer" resultMap="PaperPackageTaskResult">
+        <include refid="selectPaperPackageTaskVo"/>
+        where paper_id = #{paperId}
+          and del_flag = '0'
+        order by start_time desc
+    </select>
+
+    <update id="deleteTaskById" parameterType="Long">
+        update paper_package_task
+        set del_flag = '2', update_time = now()
+        where id = #{id}
+    </update>
+
+    <update id="deleteTasksByPaperId" parameterType="Integer">
+        update paper_package_task
+        set del_flag = '2', update_time = now()
+        where paper_id = #{paperId}
+    </update>
+
+</mapper>
+
+
+
+
+
+
+
+
+

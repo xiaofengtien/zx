@@ -1,7 +1,7 @@
 -- ============================================
 -- OSS提供商字典配置SQL（已废弃）
 -- 注意：OSS提供商配置已改为从 application.yml 读取
--- 配置文件路径：ruoyi-admin/src/main/resources/application.yml
+-- 配置文件路径：zx-admin/src/main/resources/application.yml
 -- 配置项：oss.provider (qiniu-七牛云，aliyun-阿里云)
 -- ============================================
 -- 

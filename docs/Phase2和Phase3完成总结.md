@@ -76,7 +76,7 @@
 ### 已完成的工作
 
 #### 3.1 前端 API 接口更新 ✅
-- **文件**：`ruoyi-ui/src/api/exam/paper.js`
+- **文件**：`zx-ui/src/api/exam/paper.js`
 - **新增接口**：
   - 卷别管理 API（5个接口）
   - 大题管理 API（5个接口）
@@ -85,8 +85,8 @@
 
 #### 3.2 试卷表单更新 ✅
 - **更新的文件**：
-  - `ruoyi-ui/src/views/exam/paper/edit.vue`
-  - `ruoyi-ui/src/views/exam/paper/add.vue`
+  - `zx-ui/src/views/exam/paper/edit.vue`
+  - `zx-ui/src/views/exam/paper/add.vue`
 - **新增字段**：
   - 练习次数限制（`practiceLimit`）
   - 试听功能开关（`trialListenEnabled`）

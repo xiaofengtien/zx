@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zx.student.archive.mapper.question.QuestionMapper">
+    <resultMap id="questionMap" type="com.zx.student.archive.domain.question.Question">
+        <result column="question_category_id" property="questionCategoryId"/>
+        <result column="title" property="title"/>
+        <result column="media_type" property="mediaType"/>
+        <result column="type" property="type"/>
+        <result column="option_type" property="optionType"/>
+        <result column="weight" property="weight"/>
+        <result column="answer" property="answer"/>
+        <result column="analyzes" property="analyzes"/>
+        <result column="explanation_enabled" property="explanationEnabled"/>
+        <result column="explanation_text" property="explanationText"/>
+        <result column="explanation_delay_seconds" property="explanationDelaySeconds"/>
+        <result column="status" property="status"/>
+    </resultMap>
+
+    <select id="pageList" resultType="com.zx.student.archive.domain.question.Question">
+        WITH RECURSIVE category_tree(id, father_id, tenant_id) AS (
+            SELECT qc.id, qc.father_id, qc.tenant_id
+            FROM question_category qc
+            WHERE qc.id = #{condition.questionCategoryId} AND qc.del_flag = 0
+            UNION ALL
+            SELECT c.id, c.father_id, c.tenant_id
+            FROM question_category c
+            INNER JOIN category_tree ct ON c.father_id = ct.id
+            WHERE c.del_flag = 0
+        )
+        SELECT
+            q.*,
+            s.name as subject_name
+        FROM
+            question q
+            LEFT JOIN basic_config s ON q.subject_id = s.id and s.biz_type = #{bizType}
+            <if test="condition.questionCategoryId != null and condition.questionCategoryId != 1">
+                INNER JOIN category_tree ct ON q.question_category_id = ct.id
+            </if>
+        <where>
+            <if test="condition.subjectId != null">
+                AND q.subject_id = #{condition.subjectId}
+            </if>
+            <if test="condition.type != null">
+                AND q.type = #{condition.type}
+            </if>
+            <if test="condition.status != null">
+                AND q.status = #{condition.status}
+            </if>
+            <if test="condition.title != null and condition.title != ''">
+                AND q.title LIKE CONCAT('%', #{condition.title}, '%')
+            </if>
+            AND q.del_flag = 0
+        </where>
+        ORDER BY q.weight DESC, q.id DESC
+    </select>
+
+
+    <select id="countByCategoryIds" resultType="com.zx.student.archive.domain.dto.question.QuestionCountDTO">
+        select question_category_id,count(1) as num from question where is_deleted = 0
+        <if test="categoryIds != null and categoryIds.size() > 0">
+            and question_category_id in
+            <foreach collection="categoryIds" item="categoryId" open="(" separator="," close=")">
+                #{categoryId}
+            </foreach>
+        </if>
+        group by question_category_id
+    </select>
+
+</mapper> 
